@@ -1,0 +1,14 @@
+# Merge into Roko/main/docker-compose.override.yml; do not overwrite that file.
+# Start the bridge Compose project first, so this external network exists.
+services:
+  api:
+    environment:
+      ROKO_BRIDGE_BASE_URL: http://cli-bridge:4000/v1
+    networks:
+      - default
+      - cli_bridge
+
+networks:
+  cli_bridge:
+    external: true
+    name: roko-cli-bridge
