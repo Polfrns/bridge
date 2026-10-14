@@ -226,7 +226,7 @@ test('bridge tools stream safe activity before final response', async t => {
   const output = await result.text();
   assert.equal(result.status, 200);
   assert.match(output, /reasoning_content/);
-  assert.match(output, /Comando del workspace/);
+  assert.match(output, /ROKO_BRIDGE_TOOL_V1:/);
   assert.match(output, /"content":"Done"/);
   assert.doesNotMatch(output, /secret=abc/);
   assert.doesNotMatch(output, /"tool_calls":/);

@@ -122,7 +122,7 @@ def package_xml(path: Path, matcher: re.Pattern[str]) -> str:
                     lines.append(element.text)
                 elif local in {'tab', 'line-break', 'br'}:
                     lines.append('\t' if local == 'tab' else '\n')
-            parts.append(item.filename + '\n' + ' '.join(lines))
+            parts.append(' '.join(lines) if item.filename == 'word/document.xml' else item.filename + '\n' + ' '.join(lines))
             if sum(len(p) for p in parts) > MAX_TEXT_CHARS:
                 break
     return bounded_text('\n\n'.join(parts))

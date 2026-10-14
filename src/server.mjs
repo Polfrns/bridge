@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { validateRequest, validateResponsesRequest, parseToolDecision, responsesUsage, BridgeError } from './protocol.mjs';
 import { runProvider } from './providers.mjs';
-import { traceBridgeRequest, traceBridgeActivity, shutdownTracing } from './langfuse-tracing.mjs';
+import { traceBridgeRequest, shutdownTracing } from './langfuse-tracing.mjs';
 import { createActivityReporter, activityCardRecord } from './activity.mjs';
 import { MODEL_IDS } from './presets.mjs';
 import { verifyContext } from './request-context.mjs';
@@ -155,7 +155,6 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
         const line = activityCardRecord(event);
         if (!line) return;
         activityLines.push(line);
-        traceBridgeActivity(event);
         // Transport *display-only* tool events through preserved reasoning deltas.
         // Roko renders these with its actual MCP ToolCall component; no execution replay.
         if (request.stream && api === 'chat' && !res.destroyed && !res.writableEnded) {

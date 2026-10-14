@@ -30,7 +30,7 @@ let response = {text:'Hola Pol'}, artifact = {task:'answer',status:'text',files:
 if (schema.properties.response.properties.action) response = {action:'tool_call',text:'',name:'lookup',arguments_json:'{"query":"hello"}'};
 if (input.includes('create-real') || input.includes('create-missing')) {
  response = {text:'result.pdf ready'}; artifact = {task:'create',status:'files',files:['outputs/result.pdf']};
- if (input.includes('create-real')) writeFileSync(join(cwd,'outputs/result.pdf'),'%PDF-1.7 fixture');
+ if (input.includes('create-real')) writeFileSync(join(cwd,'outputs/result.pdf'),Buffer.from('JVBERi0xLjcKJcK1wrYKCjEgMCBvYmoKPDwvVHlwZS9DYXRhbG9nL1BhZ2VzIDIgMCBSPj4KZW5kb2JqCgoyIDAgb2JqCjw8L1R5cGUvUGFnZXMvQ291bnQgMS9LaWRzWzQgMCBSXT4+CmVuZG9iagoKMyAwIG9iago8PD4+CmVuZG9iagoKNCAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1JvdGF0ZSAwL1Jlc291cmNlcyAzIDAgUi9QYXJlbnQgMiAwIFI+PgplbmRvYmoKCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNiAwMDAwMCBuIAowMDAwMDAwMDYyIDAwMDAwIG4gCjAwMDAwMDAxMTQgMDAwMDAgbiAKMDAwMDAwMDEzNSAwMDAwMCBuIAoKdHJhaWxlcgo8PC9TaXplIDUvUm9vdCAxIDAgUi9JRFs8QzNBOEMyQjIxNEMzOTNDM0FBMDQxMzEwNzRDM0E2QzI+PDdERjM1MkQ3RUM0QjUzNUY3NDJGMjRENjNERkJGNTQwPl0+PgpzdGFydHhyZWYKMjI2CiUlRU9GCg==','base64'));
 }
 if (input.includes('unsupported-edit')) {
  response = {text:'This edit is unavailable'}; artifact = {task:'edit',status:'unsupported',files:[]};
