@@ -261,11 +261,22 @@ export function validateResponsesRequest(body, previous = null) {
   const prompt = transcriptPrompt(conversation);
   const base = { model: body.model, stream: body.stream === true, system, prompt, tools, toolChoice, attachments, webSearch };
   const relay = toolDecisionPrompt(prompt, tools, toolChoice, system);
-  return { ...base, ...relay, prompt: relay.toolRelay ? relay.prompt : prompt, system: relay.toolRelay ? relay.system : system, conversation };
+  return { ...base, ...relay, prompt: relay.toolRelay ? relay.prompt : prompt, system: relay.toolRelay ? relay.system : system, conversation, toolDecisionContinuation: Boolean(previous?.conversation?.some(item => item.type === 'function_call')) };
 }
 
 export function parseToolDecision(text, request) {
-  if (!request.toolRelay) return { type: 'message', text };
+  if (!request.toolRelay) {
+    // Responses continuations can arrive without the original function schemas.
+    // Decode only a recognized decision envelope, never arbitrary JSON output.
+    if (request.toolDecisionContinuation) {
+      try {
+        const candidate = JSON.parse(text);
+        if (candidate?.action === 'message' && typeof candidate.text === 'string')
+          return { type: 'message', text: candidate.text };
+      } catch { /* Ordinary plain-text response. */ }
+    }
+    return { type: 'message', text };
+  }
   let result;
   try { result = JSON.parse(text); } catch { throw new BridgeError(502, 'The model did not return valid structured output for LibreChat tools.', 'invalid_model_output'); }
   if (result.action === 'message' && typeof result.text === 'string') {

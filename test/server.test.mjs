@@ -92,9 +92,9 @@ test('full history and instructions are passed independently per request', async
   assert.equal(inputs[0].system, 'Català'); assert.match(inputs[0].prompt, /Nom Pol/);
   assert.equal(inputs[1].system, ''); assert.doesNotMatch(inputs[1].prompt, /Nom Pol/);
 });
-test('native built-in tools and remote image URLs fail clearly; unsupported models are rejected', async t => {
-  const url = await serve(t, async function* () { assert.fail('unexpected inference'); });
-  assert.equal((await post(url, { ...body, tools: [{ type: 'web_search_preview' }] })).status, 422);
+test('native web search is supported; remote image URLs fail clearly; unsupported models are rejected', async t => {
+  const url = await serve(t, async function* (request) { assert.equal(request.webSearch, true); yield { text: 'OK' }; });
+  assert.equal((await post(url, { ...body, tools: [{ type: 'web_search_preview' }] })).status, 200);
   assert.equal((await post(url, { ...body, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://example.com' } }] }] })).status, 422);
   assert.equal((await post(url, { ...body, model: 'unknown' })).status, 400);
 });
@@ -145,18 +145,18 @@ test('Responses stream emits ordered response events and DONE', async t => {
   assert.match(res.headers.get('content-type'), /text\/event-stream/);
   const output = await res.text();
   assert.match(output, /event: response.created/); assert.match(output, /event: response.output_text.delta/);
-  assert.match(output, /"delta":"Hola "/); assert.match(output, /event: response.output_text.done/);
+  assert.match(output, /"delta":"Hola Pol"/); assert.match(output, /event: response.output_text.done/);
   assert.match(output, /event: response.completed/); assert.match(output, /data: \[DONE\]/);
   const sequence = [...output.matchAll(/"sequence_number":(\d+)/g)].map(m => Number(m[1]));
   assert.deepEqual(sequence, sequence.map((_, i) => i + 1));
 });
-test('Responses API rejects built-in web search and accepts base64 image input', async t => {
-  const url = await serve(t, async function* () { assert.fail('unexpected inference'); });
-  assert.equal((await post(url, { model: 'gpt-codex', input: 'Hi', tools: [{ type: 'web_search_preview' }] }, headers, '/v1/responses')).status, 422);
+test('Responses API supports built-in web search and accepts base64 image input', async t => {
+  const url = await serve(t, async function* (request) { assert.equal(request.webSearch, true); yield { text: 'OK' }; });
+  assert.equal((await post(url, { model: 'gpt-codex', input: 'Hi', tools: [{ type: 'web_search_preview' }] }, headers, '/v1/responses')).status, 200);
   const mediaUrl = await serve(t, async function* (request) { assert.equal(request.attachments[0].mimeType, 'image/png'); yield { text: 'Image received' }; });
   const imageRes = await post(mediaUrl, { model: 'gpt-codex', input: [{ role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,AA==' }] }] }, headers, '/v1/responses');
   assert.equal(imageRes.status, 200);
-  assert.equal((await post(url, { model: 'gpt-codex', previous_response_id: 'resp_x', input: 'Hi' }, headers, '/v1/responses')).status, 422);
+  assert.equal((await post(url, { model: 'gpt-codex', previous_response_id: 'resp_x', input: 'Hi' }, headers, '/v1/responses')).status, 400);
 });
 
 test('Responses API relays a function call in a standard completed response', async t => {
@@ -212,4 +212,23 @@ test('Responses API continues from previous_response_id after a tool result', as
   assert.equal(result.status, 200);
   assert.equal((await result.json()).output[0].content[0].text, 'The file says hello.');
   assert.match(inputs[1], /hello/);
+});
+
+// Progress is a status report, not an executable LibreChat function call.
+test('bridge tools stream safe activity before final response', async t => {
+  const url = await serve(t, async function* (request) {
+    request.onBridgeActivity?.({provider:'codex',type:'command_execution',id:'c1',state:'started',command:'secret=abc'});
+    await new Promise(resolve => setTimeout(resolve, 10));
+    request.onBridgeActivity?.({provider:'codex',type:'command_execution',id:'c1',state:'completed'});
+    yield {text:'Done'};
+  });
+  const result = await post(url, {...body,stream:true});
+  const output = await result.text();
+  assert.equal(result.status, 200);
+  assert.match(output, /reasoning_content/);
+  assert.match(output, /Comando del workspace/);
+  assert.match(output, /"content":"Done"/);
+  assert.doesNotMatch(output, /secret=abc/);
+  assert.doesNotMatch(output, /"tool_calls":/);
+  assert.ok(output.indexOf('reasoning_content') < output.indexOf('"content":"Done"'));
 });

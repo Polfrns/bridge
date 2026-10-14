@@ -28,7 +28,9 @@ test('host Python paths differ and foreign virtualenvs are rejected without modi
 
 test('Linux probe uses native command syntax and executes its quoted shell and DOCX fixture', {skip:process.platform==='win32'},async t=>{
   const run=await runtime(t);
-  const python=spawnSync('python3',['-c','import sys; print(sys.executable)'],{encoding:'utf8'}).stdout.trim();
+  const pythonProbe=spawnSync('python3',['-c','import sys; print(sys.executable)'],{encoding:'utf8'});
+  if (pythonProbe.status !== 0 || !pythonProbe.stdout) return t.skip('python3 is not installed in this test image');
+  const python=pythonProbe.stdout.trim();
   let called=false;
   const result=await checkSandbox(run,{platform:'linux',env:{CODEX_EXECUTABLE:'/opt/codex'},python,launch:(executable,args,config)=>{
     called=true;

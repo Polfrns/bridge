@@ -4,6 +4,8 @@ import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { validateRequest, validateResponsesRequest, parseToolDecision, responsesUsage, BridgeError } from './protocol.mjs';
 import { runProvider } from './providers.mjs';
+import { traceBridgeRequest, traceBridgeActivity, shutdownTracing } from './langfuse-tracing.mjs';
+import { createActivityReporter, activityCardRecord } from './activity.mjs';
 import { MODEL_IDS } from './presets.mjs';
 import { verifyContext } from './request-context.mjs';
 import { resolveCliOptions, applyCliRequestOptions } from './cli-options.mjs';
@@ -143,11 +145,28 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
       if (request.stream) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
         res.flushHeaders();
-        heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15000);
+        heartbeat = setInterval(() => { if (!res.destroyed && !res.writableEnded) res.write(': keepalive\n\n'); }, 15000);
       }
       const id = (api === 'responses' ? 'resp_' : 'chatcmpl-') + randomUUID();
       const created = Math.floor(Date.now() / 1000);
-      const collected = await collect(provider, request, controller.signal);
+      const activityLines = [];
+      const activityEnabled = process.env.BRIDGE_ACTIVITY_ENABLED !== 'false';
+      request.onBridgeActivity = activityEnabled ? createActivityReporter(event => {
+        const line = activityCardRecord(event);
+        if (!line) return;
+        activityLines.push(line);
+        traceBridgeActivity(event);
+        // Transport *display-only* tool events through preserved reasoning deltas.
+        // Roko renders these with its actual MCP ToolCall component; no execution replay.
+        if (request.stream && api === 'chat' && !res.destroyed && !res.writableEnded) {
+          res.write('data: ' + JSON.stringify({ id, object: 'chat.completion.chunk', created,
+            model: request.model, choices: [{ index: 0, delta: {reasoning_content: line}, finish_reason: null }] }) + '\n\n');
+        }
+      }) : undefined;
+      const collected = await traceBridgeRequest(request, () => collect(provider, request, controller.signal));
+      if (activityLines.length && (!request.stream || api === 'responses')) {
+        collected.reasoning.unshift(...activityLines);
+      }
       const decision = parseToolDecision(collected.text, request);
 
       if (api === 'chat') {
@@ -254,6 +273,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const host = process.env.BRIDGE_HOST || '127.0.0.1';
   server.on('error', error => { console.error(error.message); process.exitCode = 1; });
   server.listen(port, host, () => console.log(`Bridge v${BRIDGE_VERSION} on ${host}:${port}. Chat Completions + Responses API; image/document attachments, Codex/Claude sandbox file editing, web search and LibreChat function-call relay enabled.`));
-  const stop = () => { server.abortProviders(); server.close(); server.closeIdleConnections(); };
+  const stop = () => { server.abortProviders(); server.close(() => { void shutdownTracing(); }); server.closeIdleConnections(); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
 }

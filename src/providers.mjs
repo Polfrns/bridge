@@ -68,7 +68,7 @@ async function* runCodex(request, signal, cwd, before, env) {
     const { events } = await thread.runStreamed(repair ?? (request.attachments.length ? input : request.prompt), { signal, outputSchema: artifactOutputSchema(request) });
     const result = [];
     // Only the final answer from a successful, validated turn reaches LibreChat.
-    for await (const event of readCodexEvents(events, { toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none', onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; } })) result.push(event);
+    for await (const event of readCodexEvents(events, { toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none', onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; }, onActivity: request.onBridgeActivity })) result.push(event);
     return result;
   }, cwd, before, { validateFiles: files => validateFinishedFiles(files, cwd, { signal, env }), getDiagnostics: () => diagnostics, prepareResult: events => {
     const prepared = prepareArtifactResult(events, request);

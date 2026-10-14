@@ -15,11 +15,15 @@ export function codexFailureDiagnostic(item) {
   return null;
 }
 
-export async function* readCodexEvents(events, { toolRelay = false, includeReasoning = false, onDiagnostic = () => {}, onItemCompleted = () => {} } = {}) {
+export async function* readCodexEvents(events, { toolRelay = false, includeReasoning = false, onDiagnostic = () => {}, onItemCompleted = () => {}, onActivity = () => {} } = {}) {
   const seen = new Map();
   let completed = false;
   let finalResponse = '';
   for await (const event of events) {
+    if (['item.started', 'item.completed'].includes(event.type) && event.item?.type) {
+      onActivity({provider: 'codex', type: event.item.type, id: event.item.id,
+        state: event.type === 'item.started' ? 'started' : codexFailureDiagnostic(event.item) ? 'failed' : 'completed'});
+    }
     if (event.type === 'item.completed') {
       onItemCompleted(event.item);
       const diagnostic = codexFailureDiagnostic(event.item);

@@ -79,9 +79,28 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
       const prompt = (async function* () { yield { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null }; })();
       const stream = sdk.query({ prompt, options });
       let result;
+      const activeTools = new Map();
       try {
         for await (const message of stream) {
           if (message.session_id) session = message.session_id;
+          // The SDK exposes tool starts/results as distinct messages. Only safe tool
+          // names and states are emitted: no arguments, command text or file paths.
+          if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
+            for (const block of message.message.content) {
+              if (block.type !== 'tool_use' || !block.id) continue;
+              activeTools.set(block.id, block.name);
+              request.onBridgeActivity?.({provider: 'claude', type: block.name, id: block.id, state: 'started'});
+            }
+          }
+          if (message.type === 'user' && Array.isArray(message.message?.content)) {
+            for (const block of message.message.content) {
+              if (block.type !== 'tool_result' || !activeTools.has(block.tool_use_id)) continue;
+              const type = activeTools.get(block.tool_use_id);
+              activeTools.delete(block.tool_use_id);
+              request.onBridgeActivity?.({provider: 'claude', type, id: block.tool_use_id,
+                state: block.is_error ? 'failed' : 'completed'});
+            }
+          }
           if (message.type !== 'result') continue;
           if (message.is_error || message.subtype !== 'success') throw new Error('Claude failed: ' + (message.errors?.join('; ') || message.subtype));
           result = [{ text: message.structured_output !== undefined ? JSON.stringify(message.structured_output) : message.result || '' }, { usage: openAIUsage(message.usage) }];
