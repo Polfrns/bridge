@@ -28,7 +28,7 @@ async function collect(provider, request, signal) {
   for await (const event of provider(request, signal)) {
     signal.throwIfAborted();
     if (event.text) text += event.text;
-    if (typeof event.reasoning === 'string' && request.cliOptions.reasoning_summary !== 'none') reasoning.push(event.reasoning);
+    if (typeof event.reasoning === 'string' && request.cliOptions.reasoning_summary !== 'none') reasoning.push(event.reasoning.replaceAll('[[ROKO_BRIDGE_TOOL_V1:', '[bridge activity text:')); 
     if (event.usage) usage = event.usage;
     if (event.files) {
       if (!Array.isArray(event.files)) {
@@ -140,8 +140,9 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
       if (active >= maxConcurrent) throw new BridgeError(429, 'Bridge busy.', 'busy');
       active++; acquired = true;
       controller = new AbortController(); controllers.add(controller);
-      res.on('close', () => { if (!res.writableEnded) controller.abort(new Error('Client disconnected.')); });
-      timer = setTimeout(() => controller.abort(new Error('Request timed out.')), timeoutMs);
+      request.signal = controller.signal;
+      res.on('close', () => { if (!res.writableEnded) controller.abort(Object.assign(new Error('Client disconnected.'),{code:'client_disconnected'})); });
+      timer = setTimeout(() => controller.abort(Object.assign(new Error('Request timed out.'),{code:'timeout'})), timeoutMs);
       if (request.stream) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
         res.flushHeaders();
@@ -150,6 +151,29 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
       const id = (api === 'responses' ? 'resp_' : 'chatcmpl-') + randomUUID();
       const created = Math.floor(Date.now() / 1000);
       const activityLines = [];
+      let responseSequence=0, liveParts=0;
+      let responsesProgressStarted=false;
+      const liveReasoningId='rs_'+randomUUID().replaceAll('-','');
+      const sendResponseEvent=(type,data)=>{
+        responseSequence++;
+        res.write(`event: ${type}\ndata: ${JSON.stringify({type,...data,sequence_number:responseSequence})}\n\n`);
+      };
+      const responseProgress=line=>{
+        if(!responsesProgressStarted) {
+          const pending={id,object:'response',created_at:created,status:'in_progress',model:request.model,output:[],error:null};
+          sendResponseEvent('response.created',{response:pending});
+          sendResponseEvent('response.in_progress',{response:pending});
+          sendResponseEvent('response.output_item.added',{output_index:0,item:{id:liveReasoningId,type:'reasoning',summary:[]}});
+          responsesProgressStarted=true;
+        }
+        const location={item_id:liveReasoningId,output_index:0,summary_index:liveParts++};
+        const part={type:'summary_text',text:line};
+        sendResponseEvent('response.reasoning_summary_part.added',{...location,part:{type:'summary_text',text:''}});
+        sendResponseEvent('response.reasoning_summary_text.delta',{...location,delta:line});
+        sendResponseEvent('response.reasoning_summary_text.done',{...location,text:line});
+        sendResponseEvent('response.reasoning_summary_part.done',{...location,part});
+      };
+      request.executionId = id;
       const activityEnabled = process.env.BRIDGE_ACTIVITY_ENABLED !== 'false';
       request.onBridgeActivity = activityEnabled ? createActivityReporter(event => {
         const line = activityCardRecord(event);
@@ -157,13 +181,14 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
         activityLines.push(line);
         // Transport *display-only* tool events through preserved reasoning deltas.
         // Roko renders these with its actual MCP ToolCall component; no execution replay.
+        if (request.stream && api === 'responses' && !res.destroyed && !res.writableEnded) responseProgress(line);
         if (request.stream && api === 'chat' && !res.destroyed && !res.writableEnded) {
           res.write('data: ' + JSON.stringify({ id, object: 'chat.completion.chunk', created,
             model: request.model, choices: [{ index: 0, delta: {reasoning_content: line}, finish_reason: null }] }) + '\n\n');
         }
       }) : undefined;
       const collected = await traceBridgeRequest(request, () => collect(provider, request, controller.signal));
-      if (activityLines.length && (!request.stream || api === 'responses')) {
+      if (activityLines.length && !request.stream) {
         collected.reasoning.unshift(...activityLines);
       }
       const decision = parseToolDecision(collected.text, request);
@@ -207,20 +232,23 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
         text: { format: { type: 'text' }, verbosity: cliOptions.verbosity ?? null }, tool_choice: body.tool_choice || 'auto', tools: body.tools || [], top_p: null,
         truncation: 'auto', usage
       });
-      const reasoningItem = collected.reasoning.length ? {
-        id: 'rs_' + randomUUID().replaceAll('-', ''), type: 'reasoning',
-        summary: collected.reasoning.map(text => ({ type: 'summary_text', text })),
+      const responseReasoning=request.stream ? [...activityLines,...collected.reasoning] : collected.reasoning;
+      const reasoningItem = responseReasoning.length ? {
+        id: liveReasoningId, type: 'reasoning',
+        summary: responseReasoning.map(text => ({ type: 'summary_text', text })),
       } : null;
       const outputIndex = reasoningItem ? 1 : 0;
       const finalResponse = responseObject('completed', [...(reasoningItem ? [reasoningItem] : []), outputItem], responsesUsage(collected.usage));
       if (request.stream) {
-        let sequence = 0;
-        const sendEvent = (type, data) => { sequence++; res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: sequence })}\n\n`); };
-        sendEvent('response.created', { response: responseObject('in_progress', []) });
-        sendEvent('response.in_progress', { response: responseObject('in_progress', []) });
+        const sendEvent=sendResponseEvent;
+        if(!responsesProgressStarted) {
+          sendEvent('response.created', { response: responseObject('in_progress', []) });
+          sendEvent('response.in_progress', { response: responseObject('in_progress', []) });
+        }
         if (reasoningItem) {
-          sendEvent('response.output_item.added', { output_index: 0, item: { ...reasoningItem, summary: [] } });
+          if(!responsesProgressStarted) sendEvent('response.output_item.added', { output_index: 0, item: { ...reasoningItem, summary: [] } });
           reasoningItem.summary.forEach((part, summary_index) => {
+            if(summary_index<liveParts)return;
             const location = { item_id: reasoningItem.id, output_index: 0, summary_index };
             sendEvent('response.reasoning_summary_part.added', { ...location, part: { type: 'summary_text', text: '' } });
             sendEvent('response.reasoning_summary_text.delta', { ...location, delta: part.text });
@@ -259,7 +287,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
       if (acquired) active--;
     }
   });
-  server.abortProviders = () => { for (const controller of controllers) controller.abort(new Error('Server stopping.')); };
+  server.abortProviders = () => { for (const controller of controllers) controller.abort(Object.assign(new Error('Server stopping.'),{code:'shutdown'})); };
   return server;
 }
 

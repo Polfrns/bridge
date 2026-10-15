@@ -14,3 +14,7 @@ uploads/
 auth.json
 .credentials.json
 config/*.local.*
+
+# Local CI metadata and server-only release configuration.
+.ci-deploy/
+ci-result.json

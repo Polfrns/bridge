@@ -1,3 +1,4 @@
+import { activityOperation } from './activity.mjs';
 import { runClaude } from './claude-workspace.mjs';
 import { workspaceInstructions } from './workspace-instructions.mjs';
 import { mkdir } from 'node:fs/promises';
@@ -17,8 +18,8 @@ export async function* runProvider(request, signal) {
   try {
     runtime = await createIsolatedRuntime(request);
     const { cwd, env } = runtime;
-    request = await stageAttachments(request, cwd, { signal, env });
-    const before = await snapshotWorkspace(cwd);
+    request = request.attachments?.length ? await activityOperation(request, 'file.upload', {}, () => stageAttachments(request, cwd, { signal, env })) : await stageAttachments(request,cwd,{signal,env});
+    const before = await activityOperation(request, 'workspace.list', {}, () => snapshotWorkspace(cwd));
     if (request.cliOptions.provider === 'claude') {
       yield* runClaude(request, signal, cwd, before, env);
     } else yield* runCodex(request, signal, cwd, before, env);
@@ -68,9 +69,9 @@ async function* runCodex(request, signal, cwd, before, env) {
     const { events } = await thread.runStreamed(repair ?? (request.attachments.length ? input : request.prompt), { signal, outputSchema: artifactOutputSchema(request) });
     const result = [];
     // Only the final answer from a successful, validated turn reaches LibreChat.
-    for await (const event of readCodexEvents(events, { toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none', onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; }, onActivity: request.onBridgeActivity })) result.push(event);
+    for await (const event of readCodexEvents(events, { toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none', onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; }, onActivity: value => request.onBridgeActivity?.({...value, attempt:repair ? 2:1}) })) result.push(event);
     return result;
-  }, cwd, before, { validateFiles: files => validateFinishedFiles(files, cwd, { signal, env }), getDiagnostics: () => diagnostics, prepareResult: events => {
+  }, cwd, before, { onActivity:request.onBridgeActivity, signal, validateFiles: files => validateFinishedFiles(files, cwd, { signal, env }), getDiagnostics: () => diagnostics, prepareResult: events => {
     const prepared = prepareArtifactResult(events, request);
     if (prepared.manifest.status === 'unsupported') console.error('[bridge codex unsupported]', JSON.stringify({commands, failures: diagnostics.length, sandbox: 'workspace-write', ...(process.platform === 'win32' ? {windowsSandbox: codexHostConfig().windows.sandbox} : {})}));
     return prepared;

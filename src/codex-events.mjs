@@ -22,6 +22,7 @@ export async function* readCodexEvents(events, { toolRelay = false, includeReaso
   for await (const event of events) {
     if (['item.started', 'item.completed'].includes(event.type) && event.item?.type) {
       onActivity({provider: 'codex', type: event.item.type, id: event.item.id,
+        item: event.item, exitCode: event.item.exit_code, errorCategory: codexFailureDiagnostic(event.item)?.category,
         state: event.type === 'item.started' ? 'started' : codexFailureDiagnostic(event.item) ? 'failed' : 'completed'});
     }
     if (event.type === 'item.completed') {

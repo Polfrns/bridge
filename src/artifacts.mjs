@@ -1,3 +1,5 @@
+import { activityOperation } from './activity.mjs';
+import { generatedOperation } from './operations.mjs';
 import { readFile, lstat } from 'node:fs/promises';
 import { relative, resolve, sep, extname, isAbsolute } from 'node:path';
 import { collectGeneratedFiles } from './output-files.mjs';
@@ -51,7 +53,7 @@ export function prepareArtifactResult(events, request) {
   };
 }
 
-export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics = () => [], validateFiles = async () => {}, prepareResult = events => ({ events }) } = {}) {
+export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics = () => [], validateFiles = async () => {}, prepareResult = events => ({ events }), onActivity, signal } = {}) {
   const usage = {};
   let repair;
   let deliveryTask;
@@ -70,8 +72,12 @@ export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics
         }
         if (prepared.manifest.status === 'files' && ['edit', 'create', 'code'].includes(prepared.manifest.task)) deliveryTask = prepared.manifest.task;
       }
-      const files = await collectArtifacts(cwd, before, prepared.manifest);
-      await validateFiles(files);
+      const activity = {onBridgeActivity:onActivity,signal};
+      const collect=()=>collectArtifacts(cwd,before,prepared.manifest);
+      const files = prepared.manifest?.status==='files' ? await activityOperation(activity, 'file.download', {attempt:attempt+1}, collect) : await collect();
+      if (files.length) await activityOperation(activity, 'workspace.validate', {attempt:attempt+1}, () => validateFiles(files));
+      for (const file of files) onActivity?.({provider:'bridge',type:generatedOperation(file.filename),id:`artifact:${attempt}:${file.filename}`,state:'completed',
+        filename:file.filename,extension:extname(file.filename).toLowerCase(),bytes:file.bytes,attempt:attempt+1});
       return [...prepared.events.filter(event => !event.usage), { usage }, ...(files.length ? [{ files }] : [])];
     } catch (error) {
       if (attempt === 1) {

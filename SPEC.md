@@ -196,3 +196,8 @@ Los errores incluyen categoría y código. Se registran los fallos de herramient
 
 Un cambio de protocolo debe preservar las dos formas de respuesta, la identidad firmada, el control de adjuntos, la frontera de herramientas y los límites de tamaño. Un cambio del workspace debe fallar cerrado, cancelar y limpiar procesos/archivos en el flujo normal y tener una prueba de regresión significativa. Un cambio de formatos debe documentar conversión, validación y dependencias opcionales; no debe presentar solo la etiqueta MIME como prueba de capacidad.
 
+
+
+## Observabilidad v0.7.1
+
+Observabilidad v0.7.1: exportación privada, contexto HMAC por servicio y operaciones basadas en eventos reales. Véanse CHANGELOG.md y LIMITATIONS.md. Los permisos y datos enviados al modelo no cambian.

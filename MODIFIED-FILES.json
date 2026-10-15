@@ -1,0 +1,137 @@
+{
+  "release": "0.7.1",
+  "base_attachment": "bridge(1).zip",
+  "unchanged_source_files": 59,
+  "changes": [
+    {
+      "path": ".env.example",
+      "change": "modified",
+      "sha256": "ac18913a73bb4d745b17ab4f560a6a0a4b7d327e03404ead5e2a03705d593533"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "change": "added",
+      "sha256": "d3e6a5b926fa3d07a1419f9b5afc15815ff106aa7a23e2f0602653aeae7819cc"
+    },
+    {
+      "path": "DEPLOY.md",
+      "change": "added",
+      "sha256": "8518a53088b0863307a5a557a94cf473d4531ceceeb66ab974229211641e35fb"
+    },
+    {
+      "path": "Dockerfile",
+      "change": "modified",
+      "sha256": "53c14c6b862a120a8a4a4f8145628027b90aa8f917c2c77679f149ed17855484"
+    },
+    {
+      "path": "LIMITATIONS.md",
+      "change": "added",
+      "sha256": "ece139887f1bdef9f673a020aa84e0e73fa339d1505f7c462c41f247eb8974d4"
+    },
+    {
+      "path": "SPEC.md",
+      "change": "modified",
+      "sha256": "b8c54c18f5693e2c6c213ae05efd23ed770b18ab65aeb07f67ff22ffb67557ee"
+    },
+    {
+      "path": "TEST-RESULTS.md",
+      "change": "added",
+      "sha256": "4123ba01b3e76dc9a352b0726e145ca859f328b822d8dbe95bff709c11c77e17"
+    },
+    {
+      "path": "TESTS.md",
+      "change": "added",
+      "sha256": "368fb9757c3e81c95e38db0693a2abf8ef8be82d1c8f127c4382883846c36d58"
+    },
+    {
+      "path": "VERIFY-LANGFUSE.md",
+      "change": "added",
+      "sha256": "59b5408dbdc7cc112895009b486fddb0037f07188b7912d12b023f0425b0c5c3"
+    },
+    {
+      "path": "package-lock.json",
+      "change": "modified",
+      "sha256": "15e64e4e9acaed10e56765e1b3bef368b73c135dd6cd621106becd0a8e264b97"
+    },
+    {
+      "path": "package.json",
+      "change": "modified",
+      "sha256": "83ae4ab51e3be9ac5b3a4b9068e3041dc6e63b1955b01a15f473d1abdc380a4d"
+    },
+    {
+      "path": "src/activity.mjs",
+      "change": "modified",
+      "sha256": "5647dbc85d52e8ae17cbd16aa3ce4baf9f975f3fa16ceafe5a836f62f57be779"
+    },
+    {
+      "path": "src/artifacts.mjs",
+      "change": "modified",
+      "sha256": "9279c6c780f47061e57d66d6b3a72b0f81ff5e5b4b985835666db76a81375a03"
+    },
+    {
+      "path": "src/claude-workspace.mjs",
+      "change": "modified",
+      "sha256": "dd4bcc5e7f78aa6b8d5d742bc132cabd03f9471642a4fd171e160054d45e700b"
+    },
+    {
+      "path": "src/codex-events.mjs",
+      "change": "modified",
+      "sha256": "3c364b55c402a66e4f4838028502c0e5d80dca9002a886b38607018477cd96f9"
+    },
+    {
+      "path": "src/langfuse-tracing.mjs",
+      "change": "modified",
+      "sha256": "d82561425fdb39a49f94ac59e8b0b561023d49814c59ec2332c2d493d7ca9012"
+    },
+    {
+      "path": "src/operations.mjs",
+      "change": "added",
+      "sha256": "69d2faee2815050a1d030efb847c7a146fdcfad016e6f3f5e1c6051e6d3a121f"
+    },
+    {
+      "path": "src/privacy.cjs",
+      "change": "added",
+      "sha256": "4da48df635919eb8e269294d50c6e3663c348622ba650a33bd6cfd30e3d63768"
+    },
+    {
+      "path": "src/providers.mjs",
+      "change": "modified",
+      "sha256": "e9c5b2a1388f1f943cb241de508b33678ef004241cfd25a4d725eea34c5460c4"
+    },
+    {
+      "path": "src/request-context.mjs",
+      "change": "modified",
+      "sha256": "ec899bee7b5565ffbb4df052020269624cf14378335ea0f22c4076393d5d67d7"
+    },
+    {
+      "path": "src/server.mjs",
+      "change": "modified",
+      "sha256": "c52f996a91911c17ea1c041960b302631ded1b423340bb43c59d098d3879a606"
+    },
+    {
+      "path": "src/trace-context.mjs",
+      "change": "added",
+      "sha256": "d89bc11aef6cf9e11edd6786ffcf79fb99b180c6114acc5d6fdd40613c94a3f7"
+    },
+    {
+      "path": "test/activity.test.mjs",
+      "change": "modified",
+      "sha256": "6f8e6ec36b0db621a0f6c760fe7df1eab806a9f62d04b5b58b7b45810d7268b3"
+    },
+    {
+      "path": "test/observability.test.mjs",
+      "change": "added",
+      "sha256": "e2b65eda34e92acec4026eb0fe2ad1cfaefe2ba43d3bdcbdd3466f78dc27fee6"
+    },
+    {
+      "path": "test/otel-integration.test.mjs",
+      "change": "added",
+      "sha256": "eb3b0d754dbea965c6fc2e030a05591ea41c42e3b7d145ae2e0962bdc611a7ae"
+    },
+    {
+      "path": "test/server.test.mjs",
+      "change": "modified",
+      "sha256": "19f7aef1bededbfdd204907e9b62c927f8baeae37ba12ef1b5b693848af94f53"
+    }
+  ]
+}

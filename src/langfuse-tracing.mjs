@@ -1,136 +1,108 @@
-/** Langfuse SDK v5 / OpenTelemetry; fail-open, one provider invocation per request. */
-import { safeActivity } from './activity.mjs';
-
-const enabled = Boolean(process.env.LANGFUSE_BASE_URL && process.env.LANGFUSE_PUBLIC_KEY &&
-  process.env.LANGFUSE_SECRET_KEY && process.env.LANGFUSE_TRACING_ENABLED !== 'false');
-let sdk;
-let observe;
-let startSpan;
-const ready = enabled ? (async () => {
+/** Fail-open instrumentation; the application is invoked at most once. */
+import {safeActivity} from './activity.mjs';
+import privacy from './privacy.cjs';
+let sdk, tracing, api;
+const ready = (async()=>{
+  if(process.env.LANGFUSE_TRACING_ENABLED==='false' || !process.env.LANGFUSE_BASE_URL || !process.env.LANGFUSE_PUBLIC_KEY || !process.env.LANGFUSE_SECRET_KEY)return;
   try {
-    const [{NodeSDK}, {LangfuseSpanProcessor}, tracing] = await Promise.all([
-      import('@opentelemetry/sdk-node'), import('@langfuse/otel'), import('@langfuse/tracing'),
-    ]);
-    sdk = new NodeSDK({spanProcessors: [new LangfuseSpanProcessor()]});
-    sdk.start();
-    observe = tracing.startActiveObservation;
-    startSpan = tracing.startObservation;
-    console.log('[bridge tracing] Langfuse enabled');
-  } catch (error) {
-    sdk = undefined;
-    console.error('[bridge tracing] disabled:', error?.message);
+    const [{NodeSDK},{LangfuseSpanProcessor},t,a]=await Promise.all([
+      import('@opentelemetry/sdk-node'),import('@langfuse/otel'),import('@langfuse/tracing'),import('@opentelemetry/api')]);
+    sdk=new NodeSDK({spanProcessors:[privacy.protectProcessor(new LangfuseSpanProcessor({
+      mask:({data})=>privacy.sanitizeData(data),mediaUploadEnabled:false,
+    }))]});
+    sdk.start(); tracing=t; api=a;
+  } catch {sdk=undefined; console.error('[bridge tracing] initialization unavailable');}
+})();
+export function createToolTraceLifecycle(open,{max=1000}={}) {
+  const active=new Map(), finished=new Set();
+  let opened=0;
+  function close(item,state,extra={}) {
+    try {item.span.update({level:['failed','cancelled'].includes(state)?'ERROR':'DEFAULT',metadata:{...item.event,state,
+      durationMs:extra.missingStart ? undefined:Math.max(0,Date.now()-item.started),...extra}});}catch{}
+    try {item.span.end();}catch{}
   }
-})() : Promise.resolve();
-
-function usageDetails(usage) {
-  if (!usage) return undefined;
-  const input = usage.prompt_tokens ?? usage.input_tokens;
-  const output = usage.completion_tokens ?? usage.output_tokens;
-  const result = {};
-  if (Number.isFinite(input)) result.input = input;
-  if (Number.isFinite(output)) result.output = output;
-  return Object.keys(result).length ? result : undefined;
-}
-/** One isolated lifecycle per request. No raw arguments, paths, content or SDK IDs. */
-export function createToolTraceLifecycle(open, {max = 120} = {}) {
-  const active = new Map();
-  let opened = 0;
-  const close = (item, status, metadata = {}) => {
-    try {
-      item.span.update({level: status === 'failed' ? 'ERROR' : 'DEFAULT',
-        metadata: {provider: item.provider, tool: item.type, state: status,
-          durationMs: Math.max(0, Date.now() - item.started), ...metadata}});
-    } catch { /* telemetry must not affect tools */ }
-    try { item.span.end(); } catch { /* telemetry must not affect tools */ }
-  };
   return {
     event(value) {
-      const evt = safeActivity(value);
-      if (!evt) return;
-      // Use only the hashed, opaque ID generated for display events.
-      const key = evt.id;
-      if (evt.state === 'started') {
-        if (active.has(key) || opened >= max) return;
-        try {
-          const span = open('bridge.tool', {asType: 'tool',
-            metadata: {provider: evt.provider, tool: evt.type, state: 'started', operationId: key}});
-          if (span) { active.set(key, {span, started: Date.now(), provider: evt.provider, type: evt.type}); opened++; }
-        } catch { /* telemetry must not affect tools */ }
+      const e=safeActivity(value); if(!e || finished.has(e.id))return;
+      const item=active.get(e.id);
+      if(e.state==='started') {
+        if(item || opened>=max)return;
+        try {const span=open(e.operation,{metadata:{...e,state:'started'}});
+          if(span){active.set(e.id,{span,event:e,started:Date.now()});opened++;}}catch{}
       } else {
-        const item = active.get(key);
-        if (item) {
-          active.delete(key);
-          close(item, evt.state);
-        } else if (opened < max) {
-          // Some providers emit a terminal event with no start event.
-          try {
-            const span = open('bridge.tool', {asType: 'tool',
-              metadata: {provider: evt.provider, tool: evt.type, operationId: key}});
-            if (span) { opened++; close({span, started: Date.now(), provider: evt.provider, type: evt.type}, evt.state, {missingStart: true}); }
-          } catch { /* telemetry must not affect tools */ }
+        finished.add(e.id);
+        if(item){active.delete(e.id); item.event={...item.event,...e}; close(item,e.state);}
+        else if(opened<max) {
+          try {const span=open(e.operation,{metadata:e});
+            if(span){opened++;close({span,event:e,started:Date.now()},e.state,{missingStart:true});}}catch{}
         }
       }
     },
-    finish(reason = 'interrupted') {
-      for (const item of active.values()) close(item, 'failed', {finishReason: reason});
+    finish(reason='interrupted') {
+      for(const [id,item] of active){finished.add(id);close(item,reason==='request_cancelled'?'cancelled':'failed',{finishReason:reason});}
       active.clear();
     },
   };
 }
-
-/** Backwards-compatible no-op: tool spans are now scoped inside traceBridgeRequest. */
 export function traceBridgeActivity() {}
-export async function traceBridgeRequest(request, execute) {
+export async function traceBridgeRequest(request,execute) {
   await ready;
-  if (!sdk || !observe) return execute();
-  let execution;
-  let failure;
-  const runOnce = () => {
-    if (!execution) execution = Promise.resolve().then(execute).catch(err => {failure = err; throw err;});
-    return execution;
+  const original=request.onBridgeActivity;
+  const pending=new Map();
+  let tools;
+  request.onBridgeActivity=value=>{
+    const e=safeActivity(value); if(!e)return;
+    if(e.state==='started')pending.set(e.id,value);else pending.delete(e.id);
+    try {original?.(e);}catch{}
+    tools?.event(e);
   };
-  const update = (span, value) => {try {span.update(value);} catch { /* Noncritical. */ }};
-  const originalActivity = request.onBridgeActivity;
+  let execution, failure;
+  const once=()=>execution ??= Promise.resolve().then(execute).catch(error=>{failure=error;throw error;});
+  const update=(span,data)=>{try {span.update(data);}catch{}};
+  const identity={userId:request.context?.telemetryUserKey ?? request.context?.userKey,
+    sessionId:request.context?.telemetrySessionKey ?? request.context?.conversationKey};
+  const provider=request.cliOptions?.provider ?? 'other';
+  const category=()=>request.signal?.aborted ? ['timeout','client_disconnected','shutdown'].includes(request.signal.reason?.code) ? request.signal.reason.code : 'cancelled' : 'provider_failed';
+  const metadata={provider,executionId:request.executionId,attachmentCount:request.attachments?.length ?? 0};
+  const run=()=>tracing.propagateAttributes({...identity,traceName:'bridge.request'},()=>
+    tracing.startActiveObservation('bridge.request',async root=>{
+      update(root,{metadata});
+      try {
+        const result=await tracing.startActiveObservation(`model.${provider}`,async generation=>{
+          update(generation,{model:request.model,metadata:{...metadata,state:'started'}});
+          tools=createToolTraceLifecycle((name,attributes)=>generation.startObservation(name,attributes,{asType:'tool'}));
+          try {
+            const result=await once();
+            update(generation,{usageDetails:result.usage ? {input:result.usage.prompt_tokens ?? result.usage.input_tokens ?? 0,
+              output:result.usage.completion_tokens ?? result.usage.output_tokens ?? 0}:undefined,
+              metadata:{...metadata,state:'completed',generatedFileCount:result.files?.length ?? 0}});
+            return result;
+          }catch(error){update(generation,{level:'ERROR',statusMessage:request.signal?.aborted?'cancelled':'provider_failed',
+            metadata:{...metadata,state:request.signal?.aborted?'cancelled':'failed',errorCategory:category()}});throw error;}
+          finally {tools?.finish(request.signal?.aborted?'request_cancelled':failure?'provider_failed':'missing_tool_result');}
+        },{asType:'generation'});
+        update(root,{metadata:{...metadata,state:'completed'}});return result;
+      }catch(error){update(root,{level:'ERROR',statusMessage:request.signal?.aborted?'cancelled':'provider_failed',
+        metadata:{...metadata,state:request.signal?.aborted?'cancelled':'failed',errorCategory:category()}});throw error;}
+    }));
   try {
-    return await observe('bridge.request', async root => {
-      update(root, {userId: request.context?.userKey, sessionId: request.context?.conversationKey,
-        metadata: {provider: request.cliOptions?.provider, model: request.model,
-          attachmentCount: request.attachments?.length ?? 0}});
-      return observe('bridge.model-run', async generation => {
-        update(generation, {model: request.model});
-        const tools = createToolTraceLifecycle((name, options) => startSpan?.(name, options));
-        request.onBridgeActivity = event => {
-          // The UI callback is the existing source of truth for activity;
-          // telemetry is independent, best-effort and cannot block it.
-          try { originalActivity?.(event); } catch { /* best effort */ }
-          tools.event(event);
-        };
-        let succeeded = false;
-        try {
-          const result = await runOnce();
-          succeeded = true;
-          update(generation, {usageDetails: usageDetails(result.usage),
-            metadata: {generatedFileCount: result.files?.length ?? 0}});
-          return result;
-        } catch (error) {
-          update(generation, {level: 'ERROR', statusMessage: error?.name || 'provider_failed'});
-          throw error;
-        } finally {
-          tools.finish(succeeded ? 'missing_tool_result' : 'provider_failed');
-          request.onBridgeActivity = originalActivity;
-        }
-      }, {asType: 'generation'});
-    });
-  } catch (error) {
-    if (failure) throw failure;
-    console.error('[bridge tracing] noncritical failure:', error?.message);
-    return runOnce();
+    if(!sdk || !tracing)return await once();
+    let ctx=api.ROOT_CONTEXT;
+    const incoming=request.context?.traceContext;
+    if(incoming){
+      const [,traceId,spanId,flags]=incoming.traceparent.split('-');
+      ctx=api.trace.setSpanContext(ctx,{traceId,spanId,traceFlags:parseInt(flags,16),isRemote:true,
+        ...(incoming.tracestate?{traceState:api.createTraceState(incoming.tracestate)}:{})});
+    }
+    try {return await api.context.with(ctx,run);}catch(error){if(failure)throw failure;return await once();}
   } finally {
-    request.onBridgeActivity = originalActivity;
+    const reason=request.signal?.aborted?'request_cancelled':failure?'provider_failed':'missing_tool_result';
+    for(const value of pending.values()) {
+      const e={...value,state:request.signal?.aborted?'cancelled':'failed',errorCategory:request.signal?.aborted ? category() : reason};
+      try {original?.(e);}catch{} tools?.event(e);
+    }
+    tools?.finish(reason);
+    request.onBridgeActivity=original;
   }
 }
-export async function shutdownTracing() {
-  await ready;
-  if (!sdk) return;
-  try {await sdk.shutdown();} catch (error) {console.error('[bridge tracing] shutdown:', error?.message);}
-}
+export async function shutdownTracing(){await ready;try {await sdk?.shutdown();}catch{}}

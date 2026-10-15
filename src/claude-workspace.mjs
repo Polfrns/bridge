@@ -11,6 +11,15 @@ import { workspaceInstructions } from './workspace-instructions.mjs';
 
 export const EXEC_TOOL = 'mcp__workspace__execute';
 
+function workspaceResultMetadata(type, block) {
+  if(type !== EXEC_TOOL) return {};
+  try {
+    const text=typeof block.content==='string' ? block.content : (block.content ?? []).filter(x=>x.type==='text').map(x=>x.text).join('');
+    const result=JSON.parse(text);
+    return Number.isInteger(result.exitCode) ? {exitCode:result.exitCode} : {};
+  } catch {return {};}
+}
+
 /** In-process SDK transport only: no listener, separate MCP service, or global config. */
 export function claudeWorkspaceServer(sdk, executor, signal, diagnostics) {
   return sdk.createSdkMcpServer({ name: 'workspace', version: '1.0.0', tools: [sdk.tool(
@@ -88,8 +97,8 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
           if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
             for (const block of message.message.content) {
               if (block.type !== 'tool_use' || !block.id) continue;
-              activeTools.set(block.id, block.name);
-              request.onBridgeActivity?.({provider: 'claude', type: block.name, id: block.id, state: 'started'});
+              activeTools.set(block.id, {name:block.name,input:block.input});
+              request.onBridgeActivity?.({provider: 'claude', type: block.name, input:block.input, id: block.id, attempt: repair ? 2 : 1, state: 'started'});
             }
           }
           if (message.type === 'user' && Array.isArray(message.message?.content)) {
@@ -97,18 +106,24 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
               if (block.type !== 'tool_result' || !activeTools.has(block.tool_use_id)) continue;
               const type = activeTools.get(block.tool_use_id);
               activeTools.delete(block.tool_use_id);
-              request.onBridgeActivity?.({provider: 'claude', type, id: block.tool_use_id,
-                state: block.is_error ? 'failed' : 'completed'});
+              request.onBridgeActivity?.({provider: 'claude', type:type.name, input:type.input, id: block.tool_use_id, attempt: repair ? 2 : 1,
+                state: block.is_error ? 'failed' : 'completed',
+                ...(block.is_error ? {errorCategory:'tool_failed'}:{}),
+                ...workspaceResultMetadata(type.name,block)});
             }
           }
           if (message.type !== 'result') continue;
           if (message.is_error || message.subtype !== 'success') throw new Error('Claude failed: ' + (message.errors?.join('; ') || message.subtype));
           result = [{ text: message.structured_output !== undefined ? JSON.stringify(message.structured_output) : message.result || '' }, { usage: openAIUsage(message.usage) }];
         }
-      } finally { stream.close(); }
+      } finally {
+        for (const [id, tool] of activeTools) request.onBridgeActivity?.({provider:'claude',type:tool.name,input:tool.input,id,
+          state:signal.aborted ? 'cancelled':'failed',errorCategory:signal.aborted ? 'cancelled':'missing_tool_result',attempt:repair ? 2:1});
+        stream.close();
+      }
       if (!result) throw new Error('Claude ended without a successful result.');
       return result;
-    }, cwd, before, { validateFiles, getDiagnostics: () => diagnostics, prepareResult: events => prepareArtifactResult(events, request) });
+    }, cwd, before, { onActivity:request.onBridgeActivity, signal, validateFiles, getDiagnostics: () => diagnostics, prepareResult: events => prepareArtifactResult(events, request) });
     for (const event of completed) yield event;
   } finally {
     abortController.abort();

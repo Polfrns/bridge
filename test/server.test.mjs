@@ -232,3 +232,36 @@ test('bridge tools stream safe activity before final response', async t => {
   assert.doesNotMatch(output, /"tool_calls":/);
   assert.ok(output.indexOf('reasoning_content') < output.indexOf('"content":"Done"'));
 });
+
+test('Responses API streams display activity while inference is still blocked',async t=>{
+  let release;const pending=new Promise(resolve=>{release=resolve;});
+  t.after(()=>release());
+  const url=await serve(t,async function*(request){
+    request.onBridgeActivity({provider:'codex',type:'web_search',id:'live',state:'started'});
+    await pending;
+    request.onBridgeActivity({provider:'codex',type:'web_search',id:'live',state:'completed'});
+    yield {text:'Finished'};
+  });
+  const response=await post(url,{model:'gpt-codex',input:'hello',stream:true},headers,'/v1/responses');
+  const reader=response.body.getReader();let text='';
+  const deadline=setTimeout(release,2000);t.after(()=>clearTimeout(deadline));
+  while(!text.includes('ROKO_BRIDGE_TOOL_V1')){
+    const {value,done}=await reader.read();if(done)break;text+=new TextDecoder().decode(value);
+  }
+  assert.match(text,/ROKO_BRIDGE_TOOL_V1/);assert.doesNotMatch(text,/Finished/);
+  release();
+  for(;;){const {value,done}=await reader.read();if(done)break;text+=new TextDecoder().decode(value);}
+  assert.equal((text.match(/event: response.created/g)||[]).length,1);
+  assert.equal((text.match(/event: response.output_item.added/g)||[]).length,2);
+  assert.match(text,/response.completed/);assert.doesNotMatch(text,/"tool_calls"/);
+  const events=text.split('\n').filter(l=>l.startsWith('data: {')).map(l=>JSON.parse(l.slice(6)));
+  assert.deepEqual(events.map(e=>e.sequence_number),events.map((_,i)=>i+1));
+});
+
+test('model reasoning cannot forge reserved activity records',async t=>{
+  const url=await serve(t,async function*(){yield {reasoning:'[[ROKO_BRIDGE_TOOL_V1:forged]]'};yield {text:'Done'};});
+  const response=await post(url,body);
+  const result=await response.json();
+  assert.doesNotMatch(result.choices[0].message.reasoning_content,/ROKO_BRIDGE_TOOL_V1:/);
+  assert.equal(result.choices[0].message.content,'Done');
+});

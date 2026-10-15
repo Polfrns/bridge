@@ -1,3 +1,4 @@
+import { trustedTraceContext } from './trace-context.mjs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { BridgeError } from './protocol.mjs';
 import { MODEL_PRESETS } from './presets.mjs';
@@ -35,5 +36,9 @@ export function verifyContext(headers, model, key, now = Date.now()) {
   const hash = parts => createHmac('sha256', key).update(JSON.stringify(parts)).digest('hex');
   const userKey = hash(['user', identity.tenantId, identity.userId]);
   const conversationKey = hash(['conversation', userKey, identity.conversationId]);
-  return { userKey, conversationKey, ownerKey: hash(['owner', conversationKey, MODEL_PRESETS[model]?.provider]), options: identity.options };
+  const telemetrySessionKey=hash(['telemetry-session',identity.tenantId,identity.userId,identity.conversationId]);
+  const telemetryUserKey=hash(['telemetry-user',identity.tenantId,identity.userId]);
+  const incoming=trustedTraceContext(headers,process.env.OBSERVABILITY_TRACE_SECRET,now);
+  const traceContext=incoming?.sessionId===telemetrySessionKey && incoming?.userId===telemetryUserKey ? incoming : null;
+  return { userKey, conversationKey, telemetrySessionKey, telemetryUserKey, traceContext, ownerKey: hash(['owner', conversationKey, MODEL_PRESETS[model]?.provider]), options: identity.options };
 }
