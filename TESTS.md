@@ -15,3 +15,14 @@ Las pruebas nuevas comprueban límites de contenido, filtrado antes de exportar 
 ## Hotfix Responses v0.7.3
 
 Los elementos de input con type=reasoning se aceptan como metadatos de transporte y se omiten al construir el transcript CLI. Las cinco regresiones nuevas cubren Codex/Claude, estado opaco, continuación con previous_response_id, y roundtrip HTTP real tras function_call_output con/sin streaming. Las herramientas no se ejecutan en el normalizador. El estado opaco no se descifra ni se convierte en instrucciones.
+
+
+## Langfuse metering regression (2026-10-16)
+
+Content privacy tests assert SDK JSON usage/cost survives both content modes,
+reject secret fields, nesting, malformed JSON and invalid numbers, and verify
+export copies never mutate live attributes. Known Roko Bridge aliases suppress
+duplicate accounting while direct models retain measurements.
+
+`test/metering-export.test.mjs` uses the real Langfuse SDK with a local OTLP
+collector to assert numeric metrics reach export and replica inference is disabled.

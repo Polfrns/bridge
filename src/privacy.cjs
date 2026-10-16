@@ -61,7 +61,7 @@ function sanitizeContent(data) {
 function maskData(data) {
   return contentMode() === 'debug' ? sanitizeContent(data) : sanitizeData(data);
 }
-const ENUM = /^(contentMode|provider|tool|operation|state|status|errorCategory|finishReason|extension|mimeType|type|model|service|category|filename|mcpServer)$/;
+const ENUM = /^(contentMode|provider|tool|operation|state|status|errorCategory|finishReason|extension|mimeType|type|model|service|category|filename|mcpServer|usageAccounting)$/;
 const COUNTER = /^(durationMs|attempt|exitCode|startedAt|endedAt|bytes|attachmentCount|generatedFileCount|missingStart|truncated|observedAt)$/;
 function sanitizeData(data, depth=0, seen=new WeakSet()) {
   if (depth > 6) return REDACTED;
@@ -87,9 +87,32 @@ function sanitizeData(data, depth=0, seen=new WeakSet()) {
   }
   return out;
 }
+// These SDK fields are JSON strings, not arbitrary message content. Only known
+// metering keys with finite, nonnegative numeric values may cross the boundary.
+const METERING_KEYS = new Set(['input','output','total','input_tokens','output_tokens','total_tokens',
+  'input_cached_tokens','cached_tokens','cached_input','cache_read_input_tokens','cache_creation_input_tokens',
+  'input_cache_read','input_cache_creation','output_reasoning','reasoning_tokens']);
+function sanitizeMetering(value) {
+  if (typeof value === 'string') {
+    if (value.length > 16384) return undefined;
+    try { value = JSON.parse(value); } catch { return undefined; }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const clean = {};
+  for (const [key, number] of Object.entries(value)) {
+    if (METERING_KEYS.has(key) && typeof number === 'number' && Number.isFinite(number) && number >= 0) clean[key] = number;
+  }
+  return Object.keys(clean).length ? JSON.stringify(clean) : undefined;
+}
+const BRIDGE_MODEL_ALIASES = /^(gpt-codex(?:-fast|-deep)?|claude-max(?:-fast|-deep)?)$/;
 function sanitizeAttributes(attributes={}) {
   const out={};
   for(const [key,value] of Object.entries(attributes)) {
+    if (/^langfuse\.observation\.(usage_details|cost_details)$/.test(key)) {
+      const clean = sanitizeMetering(value);
+      if (clean !== undefined) out[key] = clean;
+      continue;
+    }
     if (/^langfuse\.(observation|trace)\.(input|output)$/.test(key)) {
       const clean = sanitizeContent(value);
       out[key] = JSON.stringify(clean);
@@ -135,6 +158,17 @@ function protectProcessor(processor, {provider}={}) {
           safe.attributes['langfuse.observation.metadata.state']=span.status?.code===2 ? 'failed':'completed';
         }
         if(safe.attributes['langfuse.observation.type']==='generation')safe.name='model.other';
+        // Roko sees the OpenAI-compatible response to the very same Bridge run.
+        // Keep its generation visible, but account for that run only in Bridge.
+        if (provider === 'roko' && safe.attributes['langfuse.observation.type'] === 'generation' && BRIDGE_MODEL_ALIASES.test(safe.attributes['langfuse.observation.model.name'] || '')) {
+          for (const key of Object.keys(safe.attributes)) {
+            if (/^langfuse\.observation\.(usage_details|cost_details)$|^gen_ai\.usage\.|^llm\.token_count\./.test(key)) delete safe.attributes[key];
+          }
+          // Zero overrides model-price/tokenizer inference on the replica.
+          safe.attributes['langfuse.observation.usage_details'] = JSON.stringify({input:0,output:0,total:0});
+          safe.attributes['langfuse.observation.cost_details'] = JSON.stringify({input:0,output:0,total:0});
+          safe.attributes['langfuse.observation.metadata.usageAccounting']='bridge_replica';
+        }
       }
       processor.onEnd(safe);
     } catch {}},

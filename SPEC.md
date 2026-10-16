@@ -213,3 +213,13 @@ Las pruebas nuevas comprueban límites de contenido, filtrado antes de exportar 
 ## Hotfix Responses v0.7.3
 
 Los elementos de input con type=reasoning se aceptan como metadatos de transporte y se omiten al construir el transcript CLI. Las cinco regresiones nuevas cubren Codex/Claude, estado opaco, continuación con previous_response_id, y roundtrip HTTP real tras function_call_output con/sin streaming. Las herramientas no se ejecutan en el normalizador. El estado opaco no se descifra ni se convierte en instrucciones.
+
+
+## Langfuse metering hotfix (2026-10-16)
+
+At the export boundary, usage_details and cost_details retain only recognized
+nonnegative finite numeric metrics. Exported content remains sanitized; live
+model input and output are unchanged. Roko generations for the six known Bridge
+aliases export zero usage/cost and usageAccounting=bridge_replica so Bridge is
+the sole accounting source. Direct Roko model measurements remain intact. New
+aliases and cache/reasoning detail normalization require separate integration.
