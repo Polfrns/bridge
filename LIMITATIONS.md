@@ -1,3 +1,9 @@
+# Actualización v0.7.2
+
+v0.7.2 añade contenido debug filtrado y una raíz de streaming; no captura procesos SDK invisibles. Véanse las limitaciones actuales, títulos anticipados, proyectos separados, modos y alcance temporal en [OBSERVABILITY-V072.md](OBSERVABILITY-V072.md).
+
+## Histórico v0.7.1
+
 # Límites y cobertura real
 
 - No se emiten llamadas deducidas de la intención del usuario, del texto de la respuesta ni de la extensión solicitada. `file.generated.*` acredita un archivo realmente recogido y validado por el flujo existente; no afirma qué comando lo creó.

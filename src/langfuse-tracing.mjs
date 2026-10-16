@@ -8,7 +8,7 @@ const ready = (async()=>{
     const [{NodeSDK},{LangfuseSpanProcessor},t,a]=await Promise.all([
       import('@opentelemetry/sdk-node'),import('@langfuse/otel'),import('@langfuse/tracing'),import('@opentelemetry/api')]);
     sdk=new NodeSDK({spanProcessors:[privacy.protectProcessor(new LangfuseSpanProcessor({
-      mask:({data})=>privacy.sanitizeData(data),mediaUploadEnabled:false,
+      mask:({data})=>privacy.maskData(data),mediaUploadEnabled:false,
     }))]});
     sdk.start(); tracing=t; api=a;
   } catch {sdk=undefined; console.error('[bridge tracing] initialization unavailable');}
@@ -64,16 +64,16 @@ export async function traceBridgeRequest(request,execute) {
   const provider=request.cliOptions?.provider ?? 'other';
   const category=()=>request.signal?.aborted ? ['timeout','client_disconnected','shutdown'].includes(request.signal.reason?.code) ? request.signal.reason.code : 'cancelled' : 'provider_failed';
   const metadata={provider,executionId:request.executionId,attachmentCount:request.attachments?.length ?? 0};
-  const run=()=>tracing.propagateAttributes({...identity,traceName:'bridge.request'},()=>
+  const run=()=>tracing.propagateAttributes({...identity,...(!request.context?.traceContext ? {traceName:'bridge.request'} : {})},()=>
     tracing.startActiveObservation('bridge.request',async root=>{
-      update(root,{metadata});
+      update(root,{metadata,input:privacy.sanitizeContent(request.messages ?? request.prompt)});
       try {
         const result=await tracing.startActiveObservation(`model.${provider}`,async generation=>{
-          update(generation,{model:request.model,metadata:{...metadata,state:'started'}});
+          update(generation,{model:request.model,input:privacy.sanitizeContent(request.messages ?? request.prompt),metadata:{...metadata,state:'started'}});
           tools=createToolTraceLifecycle((name,attributes)=>generation.startObservation(name,attributes,{asType:'tool'}));
           try {
             const result=await once();
-            update(generation,{usageDetails:result.usage ? {input:result.usage.prompt_tokens ?? result.usage.input_tokens ?? 0,
+            update(generation,{output:privacy.sanitizeContent(result.text),usageDetails:result.usage ? {input:result.usage.prompt_tokens ?? result.usage.input_tokens ?? 0,
               output:result.usage.completion_tokens ?? result.usage.output_tokens ?? 0}:undefined,
               metadata:{...metadata,state:'completed',generatedFileCount:result.files?.length ?? 0}});
             return result;
@@ -81,7 +81,7 @@ export async function traceBridgeRequest(request,execute) {
             metadata:{...metadata,state:request.signal?.aborted?'cancelled':'failed',errorCategory:category()}});throw error;}
           finally {tools?.finish(request.signal?.aborted?'request_cancelled':failure?'provider_failed':'missing_tool_result');}
         },{asType:'generation'});
-        update(root,{metadata:{...metadata,state:'completed'}});return result;
+        update(root,{output:privacy.sanitizeContent(result.text),metadata:{...metadata,state:'completed'}});return result;
       }catch(error){update(root,{level:'ERROR',statusMessage:request.signal?.aborted?'cancelled':'provider_failed',
         metadata:{...metadata,state:request.signal?.aborted?'cancelled':'failed',errorCategory:category()}});throw error;}
     }));

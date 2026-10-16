@@ -1,3 +1,11 @@
+# v0.7.2 — 2026-10-16
+
+Entrada y salida textual acotada en observaciones existentes, según modo redacted/debug. El contexto remoto firmado conserva nombre de la traza raíz. Filtro de secretos/binarios también en debug; nuevas pruebas HTTP con SDK/OTLP reales. Versión de servicio 0.7.2, dependencias sin cambios.
+
+Entrega basada únicamente en los ZIP actuales del 16/10. Véase OBSERVABILITY-V072.md.
+
+## Histórico anterior
+
 # Observabilidad v0.7.1 — 2026-10-15
 
 ## Bridge

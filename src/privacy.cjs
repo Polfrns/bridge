@@ -1,7 +1,67 @@
 'use strict';
 // Export-boundary policy: preserve measurements and bounded technical enums only.
 const REDACTED = '[redacted]';
-const ENUM = /^(provider|tool|operation|state|status|errorCategory|finishReason|extension|mimeType|type|model|service|category|filename|mcpServer)$/;
+function contentMode() {
+  return process.env.OBSERVABILITY_CONTENT_MODE === 'debug' ? 'debug' : 'redacted';
+}
+function contentLimit() {
+  const value = Number(process.env.OBSERVABILITY_CONTENT_MAX_CHARS || 4000);
+  return Number.isFinite(value) ? Math.max(256, Math.min(16000, Math.floor(value))) : 4000;
+}
+const PRIVATE_FIELD = /(?:^|[_-])(?:key|token|secret|password)(?:[_-]|$)|authorization|cookie|password|passwd|secret|credential|api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key|^(token|headers?|env|environment|command|cmd|path|file_path|url|data|base64|bytes|buffer|artifact|artifacts|attachments?)$/i;
+function scrubText(value) {
+  return value
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, REDACTED)
+    .replace(/data:[^\s,;]+(?:;[^,]*)?;base64,[A-Za-z0-9+/=_-]+/gi, REDACTED)
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, REDACTED)
+    .replace(/\b(?:sk-|pk-lf-|sk-lf-|ghp_|github_pat_|AIza|xox[baprs]-|ATATT|ATOA)[A-Za-z0-9_-]{8,}/g, REDACTED)
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, REDACTED)
+    .replace(/((?:[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)|authorization|password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*[=:]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '$1[redacted]')
+    .replace(/\b(?:UEsDB|JVBERi0|iVBORw0KGgo)[A-Za-z0-9+/=_-]*/g, REDACTED)
+    .replace(/\b[A-Za-z0-9+/=_-]{64,}\b/g, REDACTED)
+    .replace(/(?:\/(?:app|home|auth|data|workspace|tmp|etc)\/|[A-Za-z]:\\)[^\s"'<>]*/g, REDACTED);
+}
+/** Bounded export copy. Debug permits text, never attachment bytes or secrets. */
+function sanitizeContent(data) {
+  if (contentMode() !== 'debug') return REDACTED;
+  let remaining = contentLimit();
+  const seen = new WeakSet();
+  function walk(value, depth = 0) {
+    if (remaining <= 0 || depth > 8) return '[truncated]';
+    if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      // Parse structured payloads before truncation so late secret fields cannot escape.
+      if (value.length <= 1000000 && /^[\[{]/.test(value.trim())) {
+        try { return walk(JSON.parse(value), depth + 1); } catch { /* plain text */ }
+      }
+      if (value.length > 1000000) return '[oversized content]';
+      const safe = scrubText(value);
+      const result = safe.slice(0, remaining);
+      remaining -= result.length;
+      return result + (result.length < safe.length ? '[truncated]' : '');
+    }
+    if (typeof value !== 'object' || Buffer.isBuffer(value) || ArrayBuffer.isView(value) || seen.has(value)) return REDACTED;
+    seen.add(value);
+    if (Array.isArray(value)) return value.slice(0, 30).map(item => walk(item, depth + 1));
+    // A file block may hide its bytes under an SDK-specific property.
+    if (/file|image|audio|document|base64/i.test(String(value.type ?? value.source_type ?? ''))) {
+      return {type: 'attachment', content: REDACTED};
+    }
+    const output = {};
+    for (const [key, child] of Object.entries(value).slice(0, 60)) {
+      if (!/^[A-Za-z0-9_.-]{1,80}$/.test(key) || remaining <= 0) continue;
+      remaining -= key.length;
+      output[key] = PRIVATE_FIELD.test(key) ? REDACTED : walk(child, depth + 1);
+    }
+    return output;
+  }
+  return walk(data);
+}
+function maskData(data) {
+  return contentMode() === 'debug' ? sanitizeContent(data) : sanitizeData(data);
+}
+const ENUM = /^(contentMode|provider|tool|operation|state|status|errorCategory|finishReason|extension|mimeType|type|model|service|category|filename|mcpServer)$/;
 const COUNTER = /^(durationMs|attempt|exitCode|startedAt|endedAt|bytes|attachmentCount|generatedFileCount|missingStart|truncated|observedAt)$/;
 function sanitizeData(data, depth=0, seen=new WeakSet()) {
   if (depth > 6) return REDACTED;
@@ -30,6 +90,11 @@ function sanitizeData(data, depth=0, seen=new WeakSet()) {
 function sanitizeAttributes(attributes={}) {
   const out={};
   for(const [key,value] of Object.entries(attributes)) {
+    if (/^langfuse\.(observation|trace)\.(input|output)$/.test(key)) {
+      const clean = sanitizeContent(value);
+      out[key] = JSON.stringify(clean);
+      continue;
+    }
     if (/input|output|prompt|completion|command|content|body|header|url|path|query|statement|exception|stack|secret|token(?!s)|authorization|cookie/i.test(key)
       && !/usage|tokens|token_count/i.test(key)) {out[key]=REDACTED; continue;}
     if (key.includes('metadata')) {
@@ -63,9 +128,12 @@ function protectProcessor(processor, {provider}={}) {
     onStart:(span,ctx)=>{try {processor.onStart(span,ctx);} catch {}},
     onEnd:span=>{try {
       const safe=sanitizeSpan(span);
+      safe.attributes['langfuse.observation.metadata.contentMode']=contentMode();
       if(provider) {
         safe.attributes['langfuse.observation.metadata.provider']=provider;
-        safe.attributes['langfuse.observation.metadata.state']=span.status?.code===2 ? 'failed':'completed';
+        if (!safe.attributes['langfuse.observation.metadata.state']) {
+          safe.attributes['langfuse.observation.metadata.state']=span.status?.code===2 ? 'failed':'completed';
+        }
         if(safe.attributes['langfuse.observation.type']==='generation')safe.name='model.other';
       }
       processor.onEnd(safe);
@@ -74,4 +142,4 @@ function protectProcessor(processor, {provider}={}) {
     shutdown:async()=>{try {await processor.shutdown();} catch {}},
   };
 }
-module.exports={sanitizeData,sanitizeAttributes,sanitizeSpan,protectProcessor};
+module.exports={sanitizeData,sanitizeContent,maskData,contentMode,sanitizeAttributes,sanitizeSpan,protectProcessor};

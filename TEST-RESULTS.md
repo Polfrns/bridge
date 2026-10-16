@@ -1,3 +1,83 @@
+# Pruebas v0.7.2 — ejecutadas el 16/10/2026
+
+## Resultado de esta entrega
+
+| Servicio / comprobación | Resultado ejecutado |
+|---|---|
+| Bridge: `FILE_TEST_PYTHON=<venv>/bin/python sh ci/test.sh` | 134 pruebas Node + 9 unittest Python: PASS, 0 omitidas |
+| Roko: `sh ci/test.sh` | 7 pruebas Node de política/contexto + 3 de exportación real + 8 Jest de tarjetas + 24 Jest API: PASS, 0 omitidas |
+| Filestore: `python -m pytest --ds=tests.settings_sqlite -q` | 245 PASS, 0 omitidas |
+| Compose v2.40.3: Roko base + override, Bridge, Filestore | `config -q`: PASS en los tres, con entorno ficticio sin credenciales |
+| Parche de agents CJS/ESM | Version guard, segunda aplicación idempotente y `node --check` de ambos run: PASS |
+| Mutación: quitar raíz de interacción | La prueba de exportación falla, como debe; código original restaurado |
+| Mutación: saltar saneamiento debug | La prueba de privacidad falla, como debe; código original restaurado |
+
+Total de casos de las suites: **430 superados**. Las repeticiones no se suman.
+La primera ejecución exploratoria de Bridge omitió 5 casos al faltar el entorno
+Python; después se instalaron las herramientas y la suite CI final ejecutó todos.
+Durante el desarrollo hubo errores de fixtures/configuración que se corrigieron
+antes de los resultados finales. No se cuentan como éxitos ejecuciones fallidas.
+
+Tras el último ajuste de metadatos de modo se repitieron las pruebas afectadas:
+10 casos de observabilidad de Roko y 7 de Bridge, todos PASS. Esos casos ya están
+incluidos en el total anterior. Los resultados de las suites no afectadas se
+conservan, sin repetir builds ajenos al cambio.
+
+## Qué se verifica con los SDK reales
+
+Roko ejecuta el `Run.processStream` instalado de @librechat/agents sobre un grafo
+RunnableSequence de prueba. Se capturan spans OTLP y se comprueba: una raíz por
+respuesta, padres existentes, callbacks en la misma traza, títulos posteriores
+con ese padre, IDs deterministas, sesiones estables, usuarios separados, cierre
+en error/cancelación y ejecución única del grafo. Se ejecuta en ambos modos.
+
+Bridge recibe HTTP real con identidad HMAC y contexto W3C firmado: su exportador
+real conserva el traceId y parentSpanId externos. Una cabecera W3C sin firma no
+puede elegir la traza. Se verifican padres de herramientas, contenido de prueba
+visible únicamente en debug y ausencia de secretos. El proveedor del test es un
+adaptador de prueba; no llama a Codex/Claude externos.
+
+Filestore prueba contexto firmado, cierre de spans, autenticación previa,
+contratos de las 12 herramientas, permisos, operaciones de archivos, formatos y
+las nuevas políticas de depuración. read_file sigue devolviendo el documento al
+cliente, pero no lo exporta ni siquiera en debug.
+
+Las pruebas de contenido cubren Base64 DOCX/PDF, cuerpos de código, claves,
+Authorization, comandos, variables de entorno, URI con credenciales, presupuestos
+de texto, ciclos y no mutación de datos. La suite de archivos genera y procesa
+DOCX/PDF/código reales. Los tests de clasificación y protocolo de tarjetas
+ROKO_BRIDGE_TOOL_V1 existentes siguen ejecutándose sin alterar sus contratos.
+
+## Entorno y dependencias
+
+Node 24.19.0, npm 11.9.0, Python 3.12.14. Se instalaron los lockfiles Node con
+`npm ci --ignore-scripts` para las pruebas locales y se ejecutó explícitamente el
+parche de observabilidad de agents. No se cambió ninguna versión de dependencia.
+Bridge: @langfuse/otel y tracing 5.13.1, @opentelemetry/api 1.9.0,
+sdk-node 0.223.0, Codex SDK 0.161.0, Claude Agent SDK 0.3.291.
+Roko: LibreChat v0.8.6, @librechat/agents 3.2.35 y Langfuse 5.3.0.
+Filestore: Django 6.1.1, MCP 2.2.0, ChromaDB 1.5.9 y NumPy 2.5.3;
+OpenTelemetry SDK/API 1.45.0 y exportadores según requirements.txt. Se reafirmaron
+los pins de OpenTelemetry después de instalar las dependencias de ChromaDB.
+La suite final de 245 casos se ejecutó después de esa reafirmación.
+
+## No ejecutado aquí
+
+- Build completo de las imágenes Docker / frontend de producción: no hay daemon
+  Docker en este entorno. Sí se utilizó el binario oficial Compose para validar
+  los modelos. El pipeline existente sigue siendo el control de build/despliegue.
+- PostgreSQL de producción: los contratos de Filestore se prueban con el ajuste
+  SQLite ya existente. No certifica comportamiento específico de PostgreSQL.
+- Bitbucket Cloud/runners, despliegue en las VM del usuario y UI de Langfuse.
+- Inferencias con suscripciones reales Codex/Claude, red externa de proveedores,
+  y disponibilidad/distribución real entre las tres VM.
+
+No se usaron los .env recibidos para autenticar pruebas ni acceder a servicios.
+No se empaquetan .env, credenciales, Git, node_modules ni datos de usuarios.
+
+
+## Histórico v0.7.1 — no resultados de esta ejecución
+
 # Resultados ejecutados — v0.7.1
 
 Entorno: Linux, Node v24.19.0, npm 11.9.0, Python 3.12.14, Docker Compose v2.40.3. Dependencias obtenidas de los manifests/lockfiles de los ZIP adjuntos; sin usar implementaciones de versiones anteriores.

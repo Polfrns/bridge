@@ -1,3 +1,9 @@
+# Actualización v0.7.2
+
+Instrucciones actuales de esta entrega: [OBSERVABILITY-V072.md](OBSERVABILITY-V072.md). Incluye variables, pipelines existentes, recreación por imagen fijada y rollback.
+
+## Histórico v0.7.1
+
 # Despliegue v0.7.1
 
 Los archivos son repositorios completos de código, sin datos persistentes, logins ni .env. Mantén tus volúmenes y tu .env actuales. No ejecutes `down -v`. Antes de cambiar nada conserva una copia del código/configuración y etiqueta las imágenes actualmente instaladas como rollback. No se han aplicado cambios a tus servidores desde este entorno.

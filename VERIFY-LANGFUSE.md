@@ -1,3 +1,9 @@
+# Actualización v0.7.2
+
+Verificación actual: [OBSERVABILITY-V072.md](OBSERVABILITY-V072.md), sección Verificación en Langfuse.
+
+## Histórico v0.7.1
+
 # Verificación en Langfuse
 
 1. Crea una conversación nueva en Roko. Pide generar hola_mundo.py y después modificarlo en el siguiente mensaje. Comprueba que recibes los archivos y los cambios acumulados de la forma habitual.
