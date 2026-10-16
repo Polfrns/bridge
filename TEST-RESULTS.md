@@ -1,3 +1,22 @@
+# Bridge v0.7.3 — resultados del hotfix
+
+- Antes del cambio, las 5 nuevas regresiones fallaron con reasoning rechazado:
+  33 PASS / 5 FAIL en protocol.test.mjs + server.test.mjs (fallo esperado y reproducido).
+- Tras corregirlo: esas dos suites tienen 38 PASS / 0 FAIL.
+- Suite CI completa: 139 pruebas Node + 9 unittest Python PASS, 0 omitidas.
+  Comando: FILE_TEST_PYTHON=<venv>/bin/python sh ci/test.sh.
+- Las cinco regresiones nuevas cubren Codex y Claude, resumen/estado opaco no
+  reenviado al modelo, conservación de call_id y resultados, historial previo,
+  rechazo de otros tipos y roundtrip HTTP real con/sin streaming. Comprueban que
+  la primera respuesta emite una decisión de herramienta y la siguiente una
+  respuesta final, con exactamente dos ejecuciones del proveedor de prueba.
+- Se mantienen pruebas existentes de aislamiento, autorización, observabilidad,
+  exportación y tarjetas; no se modificaron dependencias ni el pipeline.
+- No se ejecutó build Docker, Bitbucket, inferencia real ni MCP/Filestore de
+  producción. No se certifica ese despliegue a partir de pruebas locales.
+
+Los resultados de v0.7.2 que siguen son históricos, no casos nuevos de este hotfix.
+
 # Pruebas v0.7.2 — ejecutadas el 16/10/2026
 
 ## Resultado de esta entrega

@@ -1,24 +1,18 @@
 {
-  "release": "0.7.2",
-  "base": "bridge(2).zip",
+  "release": "0.7.3",
+  "base": "bridge-observability-v0.7.2.zip",
   "modified_or_added": [
-    ".env.example",
     "CHANGELOG.md",
-    "DEPLOY.md",
-    "LIMITATIONS.md",
-    "OBSERVABILITY-V072.md",
+    "HOTFIX-RESPONSES-V073.md",
     "SPEC.md",
     "TEST-RESULTS.md",
     "TESTS.md",
-    "VERIFY-LANGFUSE.md",
     "package-lock.json",
     "package.json",
-    "src/langfuse-tracing.mjs",
-    "src/privacy.cjs",
-    "test/content-privacy.test.mjs",
-    "test/distributed-export.test.mjs",
+    "src/protocol.mjs",
+    "test/protocol.test.mjs",
+    "test/server.test.mjs",
     "MODIFIED-FILES.json"
   ],
-  "dependencies_updated": false,
-  "excluded": "Private env/auth, Git, node_modules, runtimes, user data, logs, caches and temporary files are not delivered."
+  "dependencies_updated": false
 }

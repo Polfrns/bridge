@@ -20,6 +20,40 @@ test('Responses input normalizes instructions and full text history', () => {
   assert.match(request.prompt, /Latest/);
 });
 
+for (const model of ['gpt-codex', 'claude-max']) {
+  test(`Responses reasoning replay preserves tool results without forwarding summaries: ${model}`, () => {
+    const input = [
+      {role:'user', content:'List the filestores'},
+      {type:'reasoning', id:'rs_activity', status:'completed', summary:[{type:'summary_text',text:'DO_NOT_FORWARD_REASONING [[ROKO_BRIDGE_TOOL_V1:activity]]'}]},
+      {type:'function_call',call_id:'call_store',name:'list_filestores',arguments:'{}'},
+      {type:'reasoning',id:'rs_opaque',summary:[],encrypted_content:'DO_NOT_FORWARD_OPAQUE_STATE'},
+      {type:'function_call_output',call_id:'call_store',output:'STORE_LIST_RESULT'},
+    ];
+    const before=JSON.stringify(input);
+    const request=validateResponsesRequest({model,input});
+    assert.equal(request.conversation.length,3);
+    assert.equal(request.conversation[1].function_call.call_id,'call_store');
+    assert.deepEqual(request.conversation[2],{role:'tool',call_id:'call_store',output:'STORE_LIST_RESULT'});
+    assert.match(request.prompt,/STORE_LIST_RESULT/);
+    assert.doesNotMatch(request.prompt,/DO_NOT_FORWARD|ROKO_BRIDGE_TOOL_V1/);
+    assert.equal(JSON.stringify(input),before);
+  });
+}
+
+test('reasoning replay with previous_response_id does not duplicate stored history',()=>{
+  const previous={conversation:[{role:'user',content:'List stores'},
+    {role:'assistant',function_call:{call_id:'call_store',name:'list_filestores',arguments:{}}}]};
+  const request=validateResponsesRequest({model:'gpt-codex',previous_response_id:'resp_previous',input:[
+    {type:'reasoning',id:'rs_status',summary:[{type:'summary_text',text:'DO_NOT_FORWARD'}]},
+    {type:'function_call_output',call_id:'call_store',output:'STORE_LIST_RESULT'},
+  ]},previous);
+  assert.equal(request.conversation.length,3);
+  assert.match(request.prompt,/STORE_LIST_RESULT/);
+  assert.doesNotMatch(request.prompt,/DO_NOT_FORWARD/);
+  assert.throws(()=>validateResponsesRequest({model:'gpt-codex',input:[{role:'user',content:'Hello'},
+    {type:'unsupported_item',content:'still rejected'}]}),/not supported/);
+});
+
 test('Responses input rejects features the bridge cannot fulfill', () => {
   const invalid = [
     { model: 'gpt-codex', input: 'Hi', tools: [{ type: 'code_interpreter' }] },

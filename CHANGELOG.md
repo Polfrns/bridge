@@ -1,3 +1,7 @@
+# v0.7.3 — Responses reasoning replay
+
+El normalizador acepta los elementos reasoning que el propio Bridge emite y que Roko devuelve al continuar tras una herramienta MCP. Se omiten del transcript del proveedor CLI: no son instrucciones, resultados MCP ni llamadas ejecutables. El historial humano/asistente y function_call/function_call_output se conservan. Sin cambios de dependencias, permisos, exportación ni pipeline.
+
 # v0.7.2 — 2026-10-16
 
 Entrada y salida textual acotada en observaciones existentes, según modo redacted/debug. El contexto remoto firmado conserva nombre de la traza raíz. Filtro de secretos/binarios también en debug; nuevas pruebas HTTP con SDK/OTLP reales. Versión de servicio 0.7.2, dependencias sin cambios.

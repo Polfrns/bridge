@@ -214,6 +214,39 @@ test('Responses API continues from previous_response_id after a tool result', as
   assert.match(inputs[1], /hello/);
 });
 
+for (const stream of [false,true]) {
+  test(`Responses reasoning and MCP-result roundtrip preserves one tool decision (stream=${stream})`,async t=>{
+    const prompts=[];
+    const tool={type:'function',name:'list_filestores',parameters:{type:'object',properties:{}}};
+    const url=await serve(t,async function*(request){
+      prompts.push(request.prompt);
+      if(prompts.length===1){
+        yield {reasoning:'DO_NOT_FORWARD_REASONING'};
+        yield {text:JSON.stringify({action:'tool_call',text:'',name:'list_filestores',arguments_json:'{}'})};
+      }else{
+        assert.match(request.prompt,/STORE_LIST_RESULT/);
+        assert.doesNotMatch(request.prompt,/DO_NOT_FORWARD_REASONING/);
+        yield {text:JSON.stringify({action:'message',text:'Filestore checked.',name:'',arguments_json:'{}'})};
+      }
+    });
+    const first=await post(url,{model:'gpt-codex',input:'List stores',tools:[tool]},headers,'/v1/responses');
+    const response=await first.json();
+    assert.ok(response.output.some(item=>item.type==='reasoning'));
+    const call=response.output.find(item=>item.type==='function_call');
+    assert.equal(call.name,'list_filestores');
+    assert.equal(response.output.filter(item=>item.type==='function_call').length,1);
+    // The MCP client executes the call; Bridge only consumes the returned result.
+    const next=await post(url,{model:'gpt-codex',stream,tools:[tool],input:[
+      {role:'user',content:'List stores'},...response.output,
+      {type:'function_call_output',call_id:call.call_id,output:'STORE_LIST_RESULT'},
+    ]},headers,'/v1/responses');
+    assert.equal(next.status,200);
+    if(stream){const text=await next.text();assert.match(text,/response.completed/);assert.match(text,/Filestore checked/);assert.doesNotMatch(text,/response.function_call_arguments/);}
+    else{const result=await next.json();assert.equal(result.output.find(item=>item.type==='message').content[0].text,'Filestore checked.');assert.equal(result.output.filter(item=>item.type==='function_call').length,0);}
+    assert.equal(prompts.length,2);
+  });
+}
+
 // Progress is a status report, not an executable LibreChat function call.
 test('bridge tools stream safe activity before final response', async t => {
   const url = await serve(t, async function* (request) {

@@ -221,6 +221,10 @@ function normalizeResponsesInput(input, systemParts) {
   if (typeof input === 'string') conversation.push({ role: 'user', content: input });
   else if (Array.isArray(input)) for (const item of input) {
     if (!item || typeof item !== 'object') throw new BridgeError(400, 'Invalid Responses input item.');
+    // Responses clients replay our reasoning summaries alongside tool results.
+    // CLI adapters consume the conversation, not Responses reasoning state: these are not messages,
+    // instructions or executable tool calls and must not enter their transcript.
+    if (item.type === 'reasoning') continue;
     if (item.type === 'message' || item.role) addMessage(item.role, item.content);
     else if (item.type === 'function_call') {
       let args; try { args = JSON.parse(item.arguments || '{}'); } catch { throw new BridgeError(400, 'Responses function call arguments are invalid JSON.'); }
