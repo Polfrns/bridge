@@ -1,0 +1,134 @@
+version: 1.3.12
+cache: true
+
+interface:
+  endpointsMenu: true
+  modelSelect: true
+  parameters: true
+  sidePanel: true
+  presets: true
+  bookmarks: true
+  multiConvo: true
+  webSearch: true
+  fileSearch: true
+  runCode: true
+  memories: true
+  prompts:
+    use: true
+    create: true
+    share: false
+    public: false
+  agents:
+    use: true
+    create: true
+    share: true
+    public: false
+  peoplePicker:
+    users: true
+    groups: true
+    roles: true
+  marketplace:
+    use: true
+  fileCitations: true
+
+webSearch:
+  searchProvider: "serper"
+  serperApiKey: "${SERPER_API_KEY}"
+  scraperProvider: "serper"
+  rerankerType: "jina"
+  jinaApiKey: "${JINA_API_KEY}"
+
+endpoints:
+  agents:
+    disableBuilder: false
+    capabilities:
+      - "context"
+      - "file_search"
+      - "web_search"
+      - "tools"
+      - "actions"
+      - "artifacts"
+      - "execute_code"
+      - "ocr"
+
+  custom:
+    - name: "LM Studio"
+      apiKey: "${LMSTUDIO_API_KEY}"
+      baseURL: "http://host.docker.internal:1234/v1"
+      models:
+        default:
+          - "unsloth/gemma-4-e4b-it"
+        fetch: true
+      titleConvo: true
+      titleModel: "current_model"
+      modelDisplayLabel: "LM Studio"
+
+    - name: "Claude Max"
+      apiKey: "${CLAUDE_BRIDGE_KEY}"
+      baseURL: "http://host.docker.internal:4000/v1"
+      models:
+        default:
+          - "claude-max"
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "Claude Max"
+
+    - name: "ChatGPT Codex"
+      apiKey: "${CLAUDE_BRIDGE_KEY}"
+      baseURL: "http://host.docker.internal:4000/v1"
+      models:
+        default:
+          - "gpt-codex"
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "ChatGPT Codex"
+
+fileConfig:
+  endpoints:
+    "LM Studio":
+      fileLimit: 10
+      fileSizeLimit: 25
+      totalSizeLimit: 100
+      supportedMimeTypes:
+        - "image/.*"
+        - "text/.*"
+        - "application/pdf"
+        - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    "Claude Max":
+      fileLimit: 10
+      fileSizeLimit: 25
+      totalSizeLimit: 100
+      supportedMimeTypes:
+        - "image/.*"
+        - "text/.*"
+        - "application/pdf"
+        - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    "ChatGPT Codex":
+      fileLimit: 10
+      fileSizeLimit: 25
+      totalSizeLimit: 100
+      supportedMimeTypes:
+        - "image/.*"
+        - "text/.*"
+        - "application/pdf"
+        - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    "agents":
+      fileLimit: 10
+      fileSizeLimit: 25
+      totalSizeLimit: 100
+      supportedMimeTypes:
+        - "image/.*"
+        - "text/.*"
+        - "application/pdf"
+        - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  serverFileSizeLimit: 100
+  avatarSizeLimit: 2
+
+mcpServers:
+  leedeo-filestores:
+    type: streamable-http
+    url: ${ROKO_SERVER_URL}/mcp
+    headers:
+      Authorization: "Bearer ${ROKO_API_KEY}"
+    timeout: 60000
+    chatMenu: true

@@ -1,0 +1,9 @@
+# Merge under services.api in your EXISTING override. This is not a replacement
+# for your build, volumes or container-name customizations.
+services:
+  api:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      CONFIG_PATH: /app/runtime-config.yaml
+      CLAUDE_BRIDGE_KEY: ${CLAUDE_BRIDGE_KEY}

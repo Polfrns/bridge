@@ -1,0 +1,43 @@
+image: atlassian/default-image:5
+
+definitions:
+  services:
+    docker:
+      memory: 6144
+  steps:
+    - step: &test
+        name: Tests y build en Bitbucket Cloud
+        size: 2x
+        max-time: 120
+        runtime:
+          cloud:
+            version: '3'
+        services:
+          - docker
+        script:
+          - export DOCKER_BUILDKIT=1
+          - bash ci/cloud-build.sh bridge test
+        artifacts:
+          - ci-result.json
+    - step: &deploy
+        name: Desplegar imagen aprobada en la VM
+        deployment: production
+        runs-on:
+          - self.hosted
+          - linux.shell
+          - roko.bridge.prod
+        script:
+          - bash ci/deploy.sh bridge
+pipelines:
+  default:
+    - step: *test
+  branches:
+    main:
+      - step:
+          <<: *test
+          name: Tests y build en la nube + publicar imagen aprobada
+          deployment: image-publish
+          script:
+            - export DOCKER_BUILDKIT=1
+            - bash ci/cloud-build.sh bridge publish
+      - step: *deploy

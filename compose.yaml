@@ -1,0 +1,56 @@
+name: ai-librechat-bridge
+
+services:
+  bridge:
+    build: .
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BRIDGE_API_KEY: ${BRIDGE_API_KEY:?Set BRIDGE_API_KEY in .env to the same CLAUDE_BRIDGE_KEY as Roko}
+      BRIDGE_HOST: 0.0.0.0
+      BRIDGE_PORT: "4000"
+      BRIDGE_DATA_DIR: /data
+      HOME: /auth
+      CODEX_HOME: /auth/codex
+      CLAUDE_CONFIG_DIR: /auth/claude
+      CODEX_AUTH_DIR: /auth/codex
+      CLAUDE_AUTH_DIR: /auth/claude
+      # Never carry Windows paths into the Linux image.
+      CODEX_EXECUTABLE: ""
+      CLAUDE_EXECUTABLE: ""
+    volumes:
+      - logins:/auth
+      - runtime:/data
+    ports:
+      - "192.168.1.50:${BRIDGE_PUBLISHED_PORT:-4000}:4000"
+    networks:
+      cli:
+        aliases: [cli-bridge]
+    # Bubblewrap needs nested namespaces. These exceptions apply only to this
+    # container; workspace-write and Codex's own seccomp sandbox remain enabled.
+    cap_drop: [ALL]
+    cap_add: [SYS_ADMIN]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined
+      - apparmor:unconfined
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=1777
+    pids_limit: 512
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, node, scripts/healthcheck.mjs]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  logins:
+  runtime:
+
+networks:
+  cli:
+    name: roko-cli-bridge

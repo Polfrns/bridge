@@ -1,0 +1,16 @@
+# Optional user service. Replace WorkingDirectory and ExecStart with this host's
+# absolute project path and the result of command -v node before installing.
+[Unit]
+Description=Roko CLI bridge
+
+[Service]
+Type=simple
+WorkingDirectory=/home/CHANGE_ME/ai-librechat-bridge
+ExecStart=/usr/bin/node --env-file=.env src/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target
