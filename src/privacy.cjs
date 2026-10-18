@@ -90,6 +90,18 @@ function sanitizeData(data, depth=0, seen=new WeakSet()) {
 function sanitizeAttributes(attributes={}) {
   const out={};
   for(const [key,value] of Object.entries(attributes)) {
+    if (key === 'langfuse.observation.usage_details' || key === 'langfuse.observation.cost_details') {
+      let accounting;
+      try { accounting=typeof value==='string' ? JSON.parse(value) : value; } catch { accounting=null; }
+      if (accounting && typeof accounting==='object' && !Array.isArray(accounting)) {
+        const clean={};
+        for(const field of ['input','output','total']) {
+          if(typeof accounting[field]==='number' && Number.isFinite(accounting[field]) && accounting[field]>=0) clean[field]=accounting[field];
+        }
+        if(Object.keys(clean).length) out[key]=JSON.stringify(clean);
+      }
+      continue;
+    }
     if (/^langfuse\.(observation|trace)\.(input|output)$/.test(key)) {
       const clean = sanitizeContent(value);
       out[key] = JSON.stringify(clean);
