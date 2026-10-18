@@ -23,7 +23,7 @@ services:
       - logins:/auth
       - runtime:/data
     ports:
-      - "192.168.1.50:${BRIDGE_PUBLISHED_PORT:-4000}:4000"
+      - "127.0.0.1:${BRIDGE_PUBLISHED_PORT:-4000}:4000"
     networks:
       cli:
         aliases: [cli-bridge]

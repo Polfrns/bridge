@@ -77,7 +77,7 @@ docker compose up -d api
 docker compose exec api node -e "fetch('http://cli-bridge:4000/health').then(async r => { console.log(await r.text()); if (!r.ok) process.exitCode = 1 }).catch(e => { console.error(e.message); process.exitCode = 1 })"
 ```
 
-El puerto publicado del bridge está ligado a `192.168.1.50:4000` para permitir acceso desde la red local. Si la IP de este PC cambia, actualiza la dirección en `compose.yaml`. Los contenedores de Roko deben usar el alias de red, no `localhost`; un cliente fuera de Docker en la LAN debe usar `http://192.168.1.50:4000/v1`. Permite el puerto 4000 en el firewall solo para la red local y no expongas el servicio directamente a internet.
+El puerto publicado del bridge está ligado a `127.0.0.1` y sirve para diagnóstico desde el host. Los contenedores de Roko deben usar el alias de red, no `localhost`. Si Roko está en otra máquina o fuera de Docker, configura una dirección alcanzable, limita el acceso con firewall y no expongas el servicio directamente a internet.
 
 ## Persistencia, actualización y eliminación
 
