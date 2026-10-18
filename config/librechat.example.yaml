@@ -1,0 +1,21 @@
+# Minimal portable template. Merge these endpoints into your existing YAML;
+# do not overwrite unrelated configuration on an existing installation.
+version: 1.3.12
+endpoints:
+  custom:
+    - name: "Claude Max"
+      apiKey: "${CLAUDE_BRIDGE_KEY}"
+      baseURL: "http://host.docker.internal:4000/v1"
+      models:
+        default: ["claude-max"]
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "Claude Max"
+    - name: "ChatGPT Codex"
+      apiKey: "${CLAUDE_BRIDGE_KEY}"
+      baseURL: "http://host.docker.internal:4000/v1"
+      models:
+        default: ["gpt-codex"]
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "ChatGPT Codex"
