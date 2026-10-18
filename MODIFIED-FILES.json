@@ -1,0 +1,18 @@
+{
+  "release": "0.7.3",
+  "base": "bridge-observability-v0.7.2.zip",
+  "modified_or_added": [
+    "CHANGELOG.md",
+    "HOTFIX-RESPONSES-V073.md",
+    "SPEC.md",
+    "TEST-RESULTS.md",
+    "TESTS.md",
+    "package-lock.json",
+    "package.json",
+    "src/protocol.mjs",
+    "test/protocol.test.mjs",
+    "test/server.test.mjs",
+    "MODIFIED-FILES.json"
+  ],
+  "dependencies_updated": false
+}

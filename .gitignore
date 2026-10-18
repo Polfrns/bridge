@@ -1,0 +1,20 @@
+node_modules/
+.env
+.env.*
+!.env.example
+runtime/
+logs/
+backups/
+uploads/
+*.log
+*.pem
+*.key
+.codex/
+.claude/
+auth.json
+.credentials.json
+config/*.local.*
+
+# Local CI metadata and server-only release configuration.
+.ci-deploy/
+ci-result.json

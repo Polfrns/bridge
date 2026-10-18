@@ -1,0 +1,7 @@
+FROM ai-librechat-bridge-bridge:latest
+
+USER root
+
+COPY --chown=node:node test/ /app/test/
+
+USER node
