@@ -146,6 +146,11 @@ function protectProcessor(processor, {provider}={}) {
         if (!safe.attributes['langfuse.observation.metadata.state']) {
           safe.attributes['langfuse.observation.metadata.state']=span.status?.code===2 ? 'failed':'completed';
         }
+        if(provider==='roko') {
+          for(const key of ['langfuse.observation.usage_details','langfuse.observation.cost_details']) {
+            if(safe.attributes[key]) safe.attributes[key]=JSON.stringify({input:0,output:0,total:0});
+          }
+        }
         if(safe.attributes['langfuse.observation.type']==='generation')safe.name='model.other';
       }
       processor.onEnd(safe);
