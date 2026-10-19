@@ -27,7 +27,7 @@ definitions:
           - linux.shell
           - roko.bridge.prod
         script:
-          - bash ci/deploy.sh bridge
+          - bash /opt/deploy-and-clean.sh bash ci/deploy.sh bridge
 pipelines:
   default:
     - step: *test
