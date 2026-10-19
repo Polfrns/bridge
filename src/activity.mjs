@@ -2,6 +2,56 @@ import { createHash, randomUUID } from 'node:crypto';
 import { classifyOperation, OPERATION_LABELS } from './operations.mjs';
 const SAFE = Symbol('safeActivity');
 const MAX_ACTIVITY = 1000;
+// Public SDK text is still untrusted: a redactor cannot distinguish a quoted
+// document from a progress update. Accept only complete operational sentences.
+export function safeProgressText(value) {
+  if (typeof value !== 'string' || value.length > 240) return null;
+  const text = value.replaceAll('[[ROKO_BRIDGE_TOOL_V1:', '[reserved:')
+    .replaceAll('\u001eLIBRECHAT_OUTPUT_V1\u001e', '[reserved]').trim();
+  return /^(?:Voy a (?:revisar|leer|validar|comprobar) (?:los documentos|los archivos|el resultado)|Estoy (?:revisando los documentos|leyendo los archivos|validando el resultado|preparando la respuesta)|He localizado los archivos; estoy validando el resultado|I (?:will review the documents|am reviewing the documents|am validating the result|am preparing the response))\.?$/.test(text) ? text : null;
+}
+const PROGRESS_LABELS = Object.freeze({
+  'workspace.list':'Estoy localizando los archivos.',
+  'workspace.read':'Estoy leyendo un archivo.',
+  'workspace.write':'Estoy creando un archivo.',
+  'workspace.edit':'Estoy editando un archivo.',
+  'workspace.search':'Estoy buscando en los archivos.',
+  'workspace.delete':'Estoy eliminando un archivo.',
+  'workspace.mkdir':'Estoy creando una carpeta.',
+  'workspace.validate':'Estoy validando el resultado.',
+  'file.upload':'Estoy preparando los adjuntos.',
+  'file.download':'Estoy comprobando los archivos de salida.',
+  'code.execute.python':'Estoy ejecutando Python en el workspace.',
+  'code.execute.javascript':'Estoy ejecutando JavaScript en el workspace.',
+  'web.search':'Estoy realizando una búsqueda web.',
+  'web.fetch':'Estoy consultando una página web.',
+  'web.open':'Estoy abriendo una página web.',
+  'web.download':'Estoy descargando un recurso web.',
+  'file_change':'Estoy modificando archivos.',
+  'todo_list':'Estoy actualizando el plan de trabajo.',
+  'code.test':'Estoy ejecutando pruebas.',
+  'code.validate':'Estoy validando código.',
+  'image_generation':'Estoy generando una imagen.',
+  'collab_tool_call':'Hay una operación de agente en curso.',
+});
+export function operationProgress(value) {
+  const event = safeActivity(value);
+  if (!event || event.state !== 'started') return null;
+  const text = PROGRESS_LABELS[event.operation] ?? 'Estoy ejecutando una herramienta.';
+  return `${event.attempt > 1 ? `Intento ${Math.min(99,event.attempt)}: ` : ''}${text}\n`;
+}
+export function createProgressReporter(send, {max=100, signal}={}) {
+  const seen = new Set();
+  return value => {
+    if (signal?.aborted || seen.size >= max) return;
+    const text = safeProgressText(value?.text);
+    if (!text) return;
+    const id = `${value.provider}:${value.attempt ?? 1}:${value.id ?? text}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    try { send(`${value.attempt > 1 ? 'Nuevo intento: ' : ''}${text}\n`); } catch { /* Best effort. */ }
+  };
+}
 export function safeActivity(value) {
   if (value?.[SAFE]) return value;
   if (!value || !['codex','claude','bridge'].includes(value.provider) ||

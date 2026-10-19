@@ -58,7 +58,9 @@ export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics
   let repair;
   let deliveryTask;
   for (let attempt = 0; attempt < 2; attempt++) {
+    signal?.throwIfAborted();
     const events = await runTurn(repair);
+    signal?.throwIfAborted();
     for (const event of events) {
       for (const [key, value] of Object.entries(event.usage ?? {})) {
         if (typeof value === 'number') usage[key] = (usage[key] ?? 0) + value;
@@ -76,10 +78,12 @@ export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics
       const collect=()=>collectArtifacts(cwd,before,prepared.manifest);
       const files = prepared.manifest?.status==='files' ? await activityOperation(activity, 'file.download', {attempt:attempt+1}, collect) : await collect();
       if (files.length) await activityOperation(activity, 'workspace.validate', {attempt:attempt+1}, () => validateFiles(files));
+      signal?.throwIfAborted();
       for (const file of files) onActivity?.({provider:'bridge',type:generatedOperation(file.filename),id:`artifact:${attempt}:${file.filename}`,state:'completed',
         filename:file.filename,extension:extname(file.filename).toLowerCase(),bytes:file.bytes,attempt:attempt+1});
       return [...prepared.events.filter(event => !event.usage), { usage }, ...(files.length ? [{ files }] : [])];
     } catch (error) {
+      signal?.throwIfAborted();
       if (attempt === 1) {
         const failures = getDiagnostics().slice(-4);
         const hint = failures.length ? ` Workspace execution failures: ${failures.map(item => `${item.type}${item.exitCode != null ? ` (exit ${item.exitCode})` : ''}: ${item.category}`).join('; ')}.` : '';

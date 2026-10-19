@@ -33,8 +33,8 @@ export async function* runProvider(request, signal) {
   }
 }
 
-async function* runCodex(request, signal, cwd, before, env) {
-  const { Codex } = await import('@openai/codex-sdk');
+export async function* runCodex(request, signal, cwd, before, env, dependencies = {}) {
+  const { Codex } = dependencies.sdk ?? await import('@openai/codex-sdk');
   await mkdir(resolve(cwd, 'outputs'), { recursive: true });
   await mkdir(resolve(cwd, 'work'), { recursive: true });
   const developerInstructions = workspaceInstructions(request, cwd);
@@ -69,9 +69,11 @@ async function* runCodex(request, signal, cwd, before, env) {
     const { events } = await thread.runStreamed(repair ?? (request.attachments.length ? input : request.prompt), { signal, outputSchema: artifactOutputSchema(request) });
     const result = [];
     // Only the final answer from a successful, validated turn reaches LibreChat.
-    for await (const event of readCodexEvents(events, { toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none', onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; }, onActivity: value => request.onBridgeActivity?.({...value, attempt:repair ? 2:1}) })) result.push(event);
+    for await (const event of readCodexEvents(events, { signal, toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none',
+      onProgress: value => request.onProviderProgress?.({...value,attempt:repair ? 2:1}),
+      onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; }, onActivity: value => request.onBridgeActivity?.({...value, attempt:repair ? 2:1}) })) result.push(event);
     return result;
-  }, cwd, before, { onActivity:request.onBridgeActivity, signal, validateFiles: files => validateFinishedFiles(files, cwd, { signal, env }), getDiagnostics: () => diagnostics, prepareResult: events => {
+  }, cwd, before, { onActivity:request.onBridgeActivity, signal, validateFiles: dependencies.validateFiles ?? (files => validateFinishedFiles(files, cwd, { signal, env })), getDiagnostics: () => diagnostics, prepareResult: events => {
     const prepared = prepareArtifactResult(events, request);
     if (prepared.manifest.status === 'unsupported') console.error('[bridge codex unsupported]', JSON.stringify({commands, failures: diagnostics.length, sandbox: 'workspace-write', ...(process.platform === 'win32' ? {windowsSandbox: codexHostConfig().windows.sandbox} : {})}));
     return prepared;

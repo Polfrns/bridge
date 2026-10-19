@@ -91,11 +91,18 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
       const activeTools = new Map();
       try {
         for await (const message of stream) {
+          signal.throwIfAborted();
           if (message.session_id) session = message.session_id;
+          if (message.type === 'tool_use_summary' && request.cliOptions.reasoning_summary !== 'none') {
+            request.onProviderProgress?.({provider:'claude',id:message.uuid,text:message.summary,attempt:repair ? 2:1});
+          }
           // The SDK exposes tool starts/results as distinct messages. Only safe tool
           // names and states are emitted: no arguments, command text or file paths.
           if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
             for (const block of message.message.content) {
+              if (block.type === 'text' && !message.error && !message.parent_tool_use_id && request.cliOptions.reasoning_summary !== 'none') {
+                request.onProviderProgress?.({provider:'claude',id:message.uuid ?? message.message.id,text:block.text,attempt:repair ? 2:1});
+              }
               if (block.type !== 'tool_use' || !block.id) continue;
               activeTools.set(block.id, {name:block.name,input:block.input});
               request.onBridgeActivity?.({provider: 'claude', type: block.name, input:block.input, id: block.id, attempt: repair ? 2 : 1, state: 'started'});

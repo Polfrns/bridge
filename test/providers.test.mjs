@@ -65,8 +65,10 @@ for (const event of [
   assert.equal(events.map(e => e.text || '').join(''), 'Hola Pol');
   assert.equal(events.at(-1).usage.total_tokens, 13);
   for (const reasoning_summary of ['detailed','none']) {
-    const summaries = await collect({prompt:'summary-test-'+reasoning_summary,webSearch:true,cliOptions:resolveCliOptions('gpt-codex',{reasoning_effort:'high',verbosity:'low',reasoning_summary,web_search:true})});
-    assert.equal(summaries.some(event=>event.reasoning === 'Visible SDK summary'),reasoning_summary !== 'none');
+    const progress=[];
+    const summaries = await collect({onProviderProgress:event=>progress.push(event),prompt:'summary-test-'+reasoning_summary,webSearch:true,cliOptions:resolveCliOptions('gpt-codex',{reasoning_effort:'high',verbosity:'low',reasoning_summary,web_search:true})});
+    assert.equal(progress.some(event=>event.text === 'Visible SDK summary'),reasoning_summary !== 'none');
+    assert.equal(summaries.some(event=>event.reasoning),false);
   }
   const relay = {...request,...validateResponsesRequest({model:'gpt-codex',input:'lookup hello',tools:[{type:'function',name:'lookup',description:'Lookup a value',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}}]})};
   const toolEvents = await collect(relay);

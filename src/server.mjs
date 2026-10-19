@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { validateRequest, validateResponsesRequest, parseToolDecision, responsesUsage, BridgeError } from './protocol.mjs';
 import { runProvider } from './providers.mjs';
 import { traceBridgeRequest, shutdownTracing } from './langfuse-tracing.mjs';
-import { createActivityReporter, activityCardRecord } from './activity.mjs';
+import { createActivityReporter, activityCardRecord, createProgressReporter, operationProgress } from './activity.mjs';
 import { MODEL_IDS } from './presets.mjs';
 import { verifyContext } from './request-context.mjs';
 import { resolveCliOptions, applyCliRequestOptions } from './cli-options.mjs';
@@ -23,12 +23,11 @@ const MAX_RESPONSE_STATES = 1000;
 
 async function collect(provider, request, signal) {
   let text = '', usage, totalFileBytes = 0;
-  const reasoning = [];
   const files = [];
   for await (const event of provider(request, signal)) {
     signal.throwIfAborted();
     if (event.text) text += event.text;
-    if (typeof event.reasoning === 'string' && request.cliOptions.reasoning_summary !== 'none') reasoning.push(event.reasoning.replaceAll('[[ROKO_BRIDGE_TOOL_V1:', '[bridge activity text:')); 
+    if (typeof event.reasoning === 'string') request.onProviderProgress?.({provider:request.cliOptions.provider,text:event.reasoning});
     if (event.usage) usage = event.usage;
     if (event.files) {
       if (!Array.isArray(event.files)) {
@@ -66,7 +65,7 @@ async function collect(provider, request, signal) {
   }
   signal.throwIfAborted();
   if (!text) throw new Error('Provider returned no assistant text.');
-  return { text, usage, files, reasoning };
+  return { text, usage, files };
 }
 
 function bridgeOutputContent(text, files) {
@@ -95,7 +94,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
     while (responseStates.size > MAX_RESPONSE_STATES) responseStates.delete(responseStates.keys().next().value);
   }
   const server = createServer(async (req, res) => {
-    let controller, timer, heartbeat, acquired = false;
+    let controller, timer, heartbeat, failResponseStream, acquired = false;
     try {
       const path = new URL(req.url, 'http://localhost').pathname;
       if (path === '/health' && req.method === 'GET') return json(res, 200, { status: 'ok', version: BRIDGE_VERSION, tools: true, images: true, responsesApi: true, webSearch: true, fileSearch: false, codeInterpreter: false });
@@ -175,9 +174,8 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
       };
       request.executionId = id;
       const activityEnabled = process.env.BRIDGE_ACTIVITY_ENABLED !== 'false';
-      request.onBridgeActivity = activityEnabled ? createActivityReporter(event => {
-        const line = activityCardRecord(event);
-        if (!line) return;
+      const publishProgress = (line, terminal = false) => {
+        if (!line || (controller.signal.aborted && !terminal) || res.destroyed || res.writableEnded) return;
         activityLines.push(line);
         // Transport *display-only* tool events through preserved reasoning deltas.
         // Roko renders these with its actual MCP ToolCall component; no execution replay.
@@ -186,11 +184,21 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
           res.write('data: ' + JSON.stringify({ id, object: 'chat.completion.chunk', created,
             model: request.model, choices: [{ index: 0, delta: {reasoning_content: line}, finish_reason: null }] }) + '\n\n');
         }
+      };
+      request.onProviderProgress = activityEnabled && request.cliOptions.reasoning_summary !== 'none'
+        ? createProgressReporter(publishProgress,{signal:controller.signal}) : undefined;
+      request.onBridgeActivity = activityEnabled ? createActivityReporter(event => {
+        if (controller.signal.aborted && !['failed','cancelled'].includes(event.state)) return;
+        if (request.cliOptions.reasoning_summary !== 'none') publishProgress(operationProgress(event));
+        publishProgress(activityCardRecord(event), ['failed','cancelled'].includes(event.state));
       }) : undefined;
+      failResponseStream = error => {
+        if (api !== 'responses' || !request.stream || !responsesProgressStarted) return;
+        const item={id:liveReasoningId,type:'reasoning',summary:activityLines.map(text=>({type:'summary_text',text}))};
+        sendResponseEvent('response.output_item.done',{output_index:0,item});
+        sendResponseEvent('response.failed',{response:{id,object:'response',created_at:created,status:'failed',model:request.model,output:[item],error}});
+      };
       const collected = await traceBridgeRequest(request, () => collect(provider, request, controller.signal));
-      if (activityLines.length && !request.stream) {
-        collected.reasoning.unshift(...activityLines);
-      }
       const decision = parseToolDecision(collected.text, request);
 
       if (api === 'chat') {
@@ -198,12 +206,11 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
         const choice = decision.type === 'tool_call'
           ? { index: 0, message: { role: 'assistant', content: content || null, tool_calls: [{ id: 'call_' + randomUUID(), type: 'function', function: { name: decision.name, arguments: JSON.stringify(decision.arguments) } }] }, finish_reason: 'tool_calls' }
           : { index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' };
-        if (collected.reasoning.length) choice.message.reasoning_content = collected.reasoning.join('\n\n');
+        if (activityLines.length) choice.message.reasoning_content = activityLines.join('');
         if (request.stream) {
           const send = value => res.write('data: ' + JSON.stringify(value) + '\n\n');
           const chunk = (delta, finish_reason = null) => ({ id, object: 'chat.completion.chunk', created, model: request.model, choices: [{ index: 0, delta, finish_reason }] });
           send(chunk({ role: 'assistant' }));
-          if (collected.reasoning.length) send(chunk({ reasoning_content: collected.reasoning.join('\n\n') }));
           if (content) send(chunk({ content }));
           if (decision.type === 'tool_call') {
             const toolCall = choice.message.tool_calls[0];
@@ -232,7 +239,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
         text: { format: { type: 'text' }, verbosity: cliOptions.verbosity ?? null }, tool_choice: body.tool_choice || 'auto', tools: body.tools || [], top_p: null,
         truncation: 'auto', usage
       });
-      const responseReasoning=request.stream ? [...activityLines,...collected.reasoning] : collected.reasoning;
+      const responseReasoning=activityLines;
       const reasoningItem = responseReasoning.length ? {
         id: liveReasoningId, type: 'reasoning',
         summary: responseReasoning.map(text => ({ type: 'summary_text', text })),
@@ -246,15 +253,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
           sendEvent('response.in_progress', { response: responseObject('in_progress', []) });
         }
         if (reasoningItem) {
-          if(!responsesProgressStarted) sendEvent('response.output_item.added', { output_index: 0, item: { ...reasoningItem, summary: [] } });
-          reasoningItem.summary.forEach((part, summary_index) => {
-            if(summary_index<liveParts)return;
-            const location = { item_id: reasoningItem.id, output_index: 0, summary_index };
-            sendEvent('response.reasoning_summary_part.added', { ...location, part: { type: 'summary_text', text: '' } });
-            sendEvent('response.reasoning_summary_text.delta', { ...location, delta: part.text });
-            sendEvent('response.reasoning_summary_text.done', { ...location, text: part.text });
-            sendEvent('response.reasoning_summary_part.done', { ...location, part });
-          });
+          // Every summary part was already emitted in receive order.
           sendEvent('response.output_item.done', { output_index: 0, item: reasoningItem });
         }
         if (decision.type === 'tool_call') {
@@ -279,6 +278,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 180000, 
       if (res.destroyed) return;
       const message = error instanceof BridgeError ? error.message : controller?.signal.aborted ? 'Request cancelled or timed out.' : 'Provider failed. Check local login and model configuration. ' + (error.message || '').slice(0, 300);
       const payload = { error: { message, type: 'bridge_error', code: error.code || 'provider_error' } };
+      failResponseStream?.(payload.error);
       if (res.headersSent) res.end('data: ' + JSON.stringify(payload) + '\n\ndata: [DONE]\n\n');
       else json(res, error.status || 502, payload);
     } finally {

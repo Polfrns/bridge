@@ -11,7 +11,7 @@ for (const api of ['chat','responses']) for (const stream of [false,true]) test(
   let observed;
   const server = createBridge({key,provider:async function*(request){
     observed=request;
-    yield {reasoning:'Public summary supplied by SDK'};
+    yield {reasoning:'Estoy preparando la respuesta.'};
     yield {text:request.toolRelay ? JSON.stringify({action:'tool_call',text:'',name:'lookup',arguments_json:'{}'}) : 'Answer'};
   }});
   server.listen(0,'127.0.0.1');await once(server,'listening');
@@ -28,7 +28,7 @@ for (const api of ['chat','responses']) for (const stream of [false,true]) test(
     assert.deepEqual(codexResponseConfig(observed.cliOptions),{model_verbosity:'high',model_reasoning_summary:summary});
     assert.equal(codexThreadOptions(observed,'/tmp').webSearchMode,web_search?'live':'disabled');
     assert.equal(codexThreadOptions(observed,'/tmp').modelReasoningEffort,'minimal');
-    assert.equal(text.includes('Public summary supplied by SDK'),summary!=='none');
+    assert.equal(text.includes('Estoy preparando la respuesta.'),summary!=='none');
     if(api==='responses'){
       if(stream){
         assert.equal(text.includes('response.reasoning_summary_text.delta'),summary!=='none');

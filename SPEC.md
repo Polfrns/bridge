@@ -196,6 +196,73 @@ Los errores incluyen categoría y código. Se registran los fallos de herramient
 
 Un cambio de protocolo debe preservar las dos formas de respuesta, la identidad firmada, el control de adjuntos, la frontera de herramientas y los límites de tamaño. Un cambio del workspace debe fallar cerrado, cancelar y limpiar procesos/archivos en el flujo normal y tener una prueba de regresión significativa. Un cambio de formatos debe documentar conversión, validación y dependencias opcionales; no debe presentar solo la etiqueta MIME como prueba de capacidad.
 
+## 13. Actividad pública en directo (2026-10-19)
+
+Los adaptadores disponen de dos callbacks por petición: `onBridgeActivity` para
+operaciones y `onProviderProgress` para comentarios públicos. Ambos atraviesan los
+buffers de `collect()`, del turno Codex y de la validación/reparación de artefactos.
+La respuesta final conserva el sobre estructurado y solo se publica después de
+validar los archivos. La actividad no ejecuta funciones MCP ni modifica el historial
+de instrucciones del proveedor.
+
+Fuentes verificadas en los tipos y código de los SDK fijados:
+
+- Claude Agent SDK `0.3.291`: bloques `text` de mensajes `assistant` de nivel raíz
+  sin error, `tool_use_summary.summary` y operaciones `tool_use`/`tool_result`.
+  Se ignoran thinking, mensajes de subagentes, stdout, eventos de razonamiento
+  interno y el texto del resultado estructurado como fuentes de actividad.
+- Codex SDK `0.161.0`: `item.completed` con `reasoning.text` (documentado en el SDK
+  como resumen), mensajes públicos `agent_message` completos y operaciones reales.
+  Este SDK no declara `phase` en `AgentMessageItem`: no se interpreta un delta o un
+  snapshot JSON como comentario. El último mensaje completo sigue siendo el
+  candidato a respuesta final y debe superar el contrato de artefactos.
+
+Que un texto sea público no garantiza que carezca de datos de archivos. Por eso
+`safeProgressText` admite únicamente frases operativas completas de una lista
+cerrada en español/inglés, con máximo de 240 caracteres; rechaza el resto, incluidos
+JSON, secretos, rutas, comandos y delimitadores reservados. Esto limita expresamente
+la variedad de comentarios literales que se retransmiten. Si no hay un comentario
+seguro, el inicio de una operación real produce una frase fija por su clasificación,
+por ejemplo «Estoy leyendo un archivo» o «Estoy validando el resultado». No se usa
+otro modelo ni se deducen éxitos a partir de texto libre.
+
+Por petición se admiten hasta 100 comentarios SDK, deduplicados por proveedor, ID
+y número de intento. Continúa el límite de 1000 operaciones, con hasta una frase
+por inicio y sus registros V1 de inicio/fin. Los comentarios no se convierten en
+registros. Los registros `[[ROKO_BRIDGE_TOOL_V1:...]]` mantienen sus IDs opacos,
+duraciones, estados y número de intento; el segundo intento tiene IDs distintos.
+Los cierres por error/cancelación no generan comentarios de éxito. La actividad no
+añade nombres de archivos ni datos de entrada/salida; sigue aplicándose la política
+existente de metadatos optativos para tarjetas.
+
+Los callbacks publican en un único historial ordenado:
+
+- Chat streaming: cada entrada llega inmediatamente en `delta.reasoning_content`.
+- Responses streaming: un elemento reasoning, con un ciclo
+  `response.reasoning_summary_part.added`, `response.reasoning_summary_text.delta`,
+  `response.reasoning_summary_text.done`, `response.reasoning_summary_part.done`
+  por entrada. `summary_index` crece desde cero, con un ID común y números de
+  secuencia consecutivos para todos los eventos. El elemento se cierra al terminar;
+  si falla después de emitir actividad se cierra y se envía `response.failed`.
+- Sin streaming: el mismo historial aparece una vez en `reasoning_content` o en
+  `output[type=reasoning].summary`, en orden de recepción. El progreso ya enviado
+  no se repite como delta al terminar. Las instantáneas finales de Responses
+  conservan el historial como exige ese protocolo.
+
+`BRIDGE_ACTIVITY_ENABLED=false` desactiva comentarios y tarjetas públicas, sin
+desactivar la instrumentación privada. En Codex, `reasoning_summary=none` desactiva los
+comentarios SDK y las frases derivadas, conservando las tarjetas V1 existentes.
+Claude conserva el rechazo explícito de ese parámetro no admitido.
+Después de abortar se descartan comentarios y nuevos éxitos; aún puede enviarse el
+cierre fallido/cancelado de una tarjeta abierta si el cliente sigue conectado.
+HMAC, ámbitos de identidad, políticas de sandbox y límites de archivos no cambian.
+
+La consulta al registro npm el 2026-10-19 devolvió Claude `0.3.303` y Codex `0.163.0`.
+Se mantienen las versiones fijadas por el proyecto. `npm ci --ignore-scripts`
+reconcilió la instalación local de Codex, que era `0.160.1`, con el lockfile `0.161.0`.
+La [documentación oficial del SDK](https://learn.chatgpt.com/docs/codex-sdk)
+describe `runStreamed`; los tipos instalados son la referencia para estos eventos.
+
 
 
 ## Observabilidad v0.7.1
