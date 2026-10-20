@@ -7,7 +7,10 @@ export function workspaceInstructions(request, cwd) {
   const python = runtimePython();
   return [
     request.system,
+    request.webSearch ? 'Live web search is available. Search for current facts when needed and include source URLs.' : '',
     ARTIFACT_INSTRUCTIONS,
+    'Public tool activity: before each meaningful tool operation, provide one short public sentence in the user language describing the specific action and its immediate purpose. Describe that operation, not the whole plan. Prefer its public target name over internal paths or command syntax. For the workspace execute tool, put this explanation in its description argument. For other tools, use ordinary public commentary immediately before the call. Keep internal thinking private. Avoid repeating boilerplate for every step.',
+    'For native executable requests, inspect the available target-platform toolchain before attempting a build. A Linux PyInstaller build is not a Windows EXE. Do not relabel scripts or Linux binaries as EXE files. If a requested component cannot be built with the installed toolchain, explain that limitation promptly and return any other genuinely completed deliverables instead of retrying unavailable tools until timeout.',
     process.platform === 'win32'
       ? 'The bridge runs natively on Windows. Use the available Windows shell and Windows executable paths.'
       : 'The bridge runs natively on Linux. Use the available POSIX shell and Linux executable paths; do not use PowerShell or Windows paths.',

@@ -1,3 +1,4 @@
+import { chatActivity } from './chat-activity.mjs';
 /** Fail-open instrumentation; the application is invoked at most once. */
 import {safeActivity} from './activity.mjs';
 import privacy from './privacy.cjs';
@@ -15,6 +16,10 @@ const ready = (async()=>{
 })();
 export function createToolTraceLifecycle(open,{max=1000}={}) {
   const active=new Map(), finished=new Set();
+  const content = value => {
+    const chat = chatActivity(value);
+    return {input:privacy.sanitizeContent(chat?.command ?? chat?.arguments), output:privacy.sanitizeContent(chat?.toolOutput)};
+  };
   let opened=0;
   function close(item,state,extra={}) {
     try {item.span.update({level:['failed','cancelled'].includes(state)?'ERROR':'DEFAULT',metadata:{...item.event,state,
@@ -27,13 +32,13 @@ export function createToolTraceLifecycle(open,{max=1000}={}) {
       const item=active.get(e.id);
       if(e.state==='started') {
         if(item || opened>=max)return;
-        try {const span=open(e.operation,{metadata:{...e,state:'started'}});
+        try {const span=open(e.operation,{metadata:{...e,state:'started'},...content(value)});
           if(span){active.set(e.id,{span,event:e,started:Date.now()});opened++;}}catch{}
       } else {
         finished.add(e.id);
-        if(item){active.delete(e.id); item.event={...item.event,...e}; close(item,e.state);}
+        if(item){active.delete(e.id); item.event={...item.event,...e}; try {item.span.update(content(value));}catch{} close(item,e.state);}
         else if(opened<max) {
-          try {const span=open(e.operation,{metadata:e});
+          try {const span=open(e.operation,{metadata:e,...content(value)});
             if(span){opened++;close({span,event:e,started:Date.now()},e.state,{missingStart:true});}}catch{}
         }
       }
@@ -53,8 +58,8 @@ export async function traceBridgeRequest(request,execute) {
   request.onBridgeActivity=value=>{
     const e=safeActivity(value); if(!e)return;
     if(e.state==='started')pending.set(e.id,value);else pending.delete(e.id);
-    try {original?.(e);}catch{}
-    tools?.event(e);
+    try {original?.(value);}catch{}
+    tools?.event(value);
   };
   let execution, failure;
   const once=()=>execution ??= Promise.resolve().then(execute).catch(error=>{failure=error;throw error;});

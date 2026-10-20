@@ -5,7 +5,8 @@ import { relative, resolve, sep, extname, isAbsolute } from 'node:path';
 import { collectGeneratedFiles } from './output-files.mjs';
 
 export const ARTIFACT_INSTRUCTIONS = `Return your final answer in the structured envelope required by the output schema:
-{"response":{"text":"user-facing answer"},"artifact":{"task":"edit|create|answer|code","status":"files|text|unsupported","files":["outputs/name.ext"]}}.
+{"artifact":{"task":"edit|create|answer|code","status":"files|text|unsupported","files":["outputs/name.ext"]},"response":{"text":"user-facing answer"}}.
+Write artifact first, then response. For ordinary answers use artifact {"task":"answer","status":"text","files":[]} before writing response.text; this allows the bridge to stream the answer as you write it. In function relay write response.action before response.text. Do not change the delivery type after starting the response text.
 For LibreChat function relay, response must contain the requested action, text, name and arguments_json fields instead. The outer response/artifact envelope takes precedence over earlier instructions showing only the function decision object.
 For edits to documents, images or media use task edit and status files. For explicitly requested source code edits or creation (.py, .js, .ts, scripts, etc.) use task code and status files. Create and execute helper scripts in work/, but save only finished deliverables in outputs/. Never list helper scripts as edited images, PDFs or Office documents. A script that has not been executed is not an edited document.
 Use the requested format (preserve the input format unless conversion is requested). Open/validate the finished files with the relevant library before declaring success. For images, save actual image bytes; for PDF, save and reopen an actual PDF. Mention the final filenames. If the operation cannot be done with available tools, use unsupported and explain the limitation; never claim success.
@@ -16,10 +17,6 @@ export function artifactOutputSchema(request) {
   return {
     type: 'object', additionalProperties: false,
     properties: {
-      response: request.toolRelay ? request.outputSchema : {
-        type: 'object', additionalProperties: false,
-        properties: { text: { type: 'string' } }, required: ['text'],
-      },
       artifact: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -29,8 +26,12 @@ export function artifactOutputSchema(request) {
         },
         required: ['task', 'status', 'files'],
       },
+      response: request.toolRelay ? request.outputSchema : {
+        type: 'object', additionalProperties: false,
+        properties: { text: { type: 'string' } }, required: ['text'],
+      },
     },
-    required: ['response', 'artifact'],
+    required: ['artifact', 'response'],
   };
 }
 
@@ -53,7 +54,7 @@ export function prepareArtifactResult(events, request) {
   };
 }
 
-export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics = () => [], validateFiles = async () => {}, prepareResult = events => ({ events }), onActivity, signal } = {}) {
+export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics = () => [], validateFiles = async () => {}, prepareResult = events => ({ events }), canRepair = () => true, onActivity, signal } = {}) {
   const usage = {};
   let repair;
   let deliveryTask;
@@ -77,13 +78,14 @@ export async function completeArtifactRun(runTurn, cwd, before, { getDiagnostics
       const activity = {onBridgeActivity:onActivity,signal};
       const collect=()=>collectArtifacts(cwd,before,prepared.manifest);
       const files = prepared.manifest?.status==='files' ? await activityOperation(activity, 'file.download', {attempt:attempt+1}, collect) : await collect();
-      if (files.length) await activityOperation(activity, 'workspace.validate', {attempt:attempt+1}, () => validateFiles(files));
+      if (files.length) await activityOperation(activity, 'workspace.validate', {attempt:attempt+1,fileCount:files.length}, () => validateFiles(files));
       signal?.throwIfAborted();
       for (const file of files) onActivity?.({provider:'bridge',type:generatedOperation(file.filename),id:`artifact:${attempt}:${file.filename}`,state:'completed',
         filename:file.filename,extension:extname(file.filename).toLowerCase(),bytes:file.bytes,attempt:attempt+1});
       return [...prepared.events.filter(event => !event.usage), { usage }, ...(files.length ? [{ files }] : [])];
     } catch (error) {
       signal?.throwIfAborted();
+      if (!canRepair()) throw error;
       if (attempt === 1) {
         const failures = getDiagnostics().slice(-4);
         const hint = failures.length ? ` Workspace execution failures: ${failures.map(item => `${item.type}${item.exitCode != null ? ` (exit ${item.exitCode})` : ''}: ${item.category}`).join('; ')}.` : '';

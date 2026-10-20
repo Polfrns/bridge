@@ -1,56 +1,75 @@
-# Operación y solución de problemas
+# Operación y diagnóstico
 
-Esta guía reúne las comprobaciones habituales del bridge y cómo interpretar sus fallos. La especificación del contrato y los límites está en [SPEC.md](SPEC.md); los pasos de instalación están en [DOCKER.md](DOCKER.md) y [UBUNTU.md](UBUNTU.md).
+Para instalar usa [DOCKER.md](DOCKER.md) o [UBUNTU.md](UBUNTU.md). En producción gestionada por CI, ejecuta los comandos Compose mediante ci/compose.sh para conservar la imagen y definiciones fijadas: [DEPLOY.md](DEPLOY.md).
 
 ## Comprobación rápida
 
-En Docker:
+En una instalación Compose local:
 
 ```bash
 docker compose ps
 docker compose logs --tail=100 bridge
 docker compose exec bridge bridge health
+docker compose exec bridge bridge claude auth status
+docker compose exec bridge bridge codex login status
 docker compose exec bridge bridge check:workspace
+docker compose exec bridge bridge check:sandbox
 ```
 
-Ejecuta `docker compose exec bridge bridge check:sandbox` si utilizas Codex. En nativo, desde el directorio del proyecto:
+Ejecuta solo los comandos de los proveedores que utilices. En nativo, los checks son npm run check:workspace y npm run check:sandbox.
+
+health comprueba vida HTTP y capacidades declaradas, no autenticación ni sandbox. check:workspace prueba el ejecutor restringido de Claude sin login/inferencia; si existe toolkit, también edita y valida DOCX. check:sandbox prueba el sandbox nativo sin llamar al modelo; su preparación usa credenciales Codex. Las restricciones deben comprobarse con el usuario y host reales.
+
+## Diagnóstico
+
+| Síntoma | Comprobación |
+| --- | --- |
+| Roko no conecta | Misma red roko-cli-bridge y URL http://cli-bridge:4000/v1. Desde otro contenedor localhost apunta al propio contenedor. Para ejecución nativa usa la dirección alcanzable del host. |
+| Bearer o HMAC inválido | Misma BRIDGE_API_KEY/CLAUDE_BRIDGE_KEY, contexto firmado por el backend y reloj correcto. La URL autorizada para propagación debe coincidir con la configurada en Roko. |
+| health responde pero falla inferencia | Login del proveedor, acceso al modelo backend y check del sandbox por separado. |
+| login_required | Reautentica dentro del contenedor/usuario del servicio; reconstruir no importa los logins del host. |
+| bwrap/sandbox rechazado | Kernel y perfiles Docker, bubblewrap en nativo y check:workspace. No se ejecuta shell sin aislamiento. |
+| Windows exige sandbox elevado | Revisa CODEX_WINDOWS_SANDBOX y la preparación administrativa del backend; unelevated puede no satisfacer la restricción de lecturas de Claude. |
+| No aparece el archivo | Debe existir bajo outputs/, estar declarado, cambiado, no vacío y dentro de límites. Revisa también dependencias del validador y descarga en Roko. |
+| validationStatus=unavailable/partial | Faltan comprobaciones del toolkit; no equivale a validación estructural completa. |
+| response ID desconocido | Estado Responses expirado, reiniciado o de otro propietario. Reenvía historial compatible desde Roko. |
+| request_timeout / HTTP 504 | El default es diez minutos. Ajusta REQUEST_TIMEOUT_MS si el trabajo lo requiere y recrea; revisa también límites del cliente/proxy. |
+| Prueba falla durante docker build | La etapa ci es obligatoria. Consulta el primer test fallido y [TESTS.md](TESTS.md); el fallo bloquea la imagen de producción. |
+
+## Aplicar modelos y cambios de configuración
+
+Los valores de .env.example son una plantilla. La instalación lee .env y el entorno del proceso. Revisa perfiles, variables FAST/DEEP, allowlists y opciones enviadas por Roko: [SPEC.md](SPEC.md).
+
+En Compose local, tras cambiar código:
 
 ```bash
-npm test
-npm run check:workspace
-npm run check:sandbox
+docker compose up -d --build
 ```
 
-Los checks de sandbox se ejecutan en el host final. El test automatizado puede simular CLIs y no valida por sí mismo las restricciones del kernel, la cuenta del proveedor ni la conectividad entre contenedores.
+Tras cambiar solo .env, recrea sin reconstruir:
 
-## Diagnóstico por síntoma
+```bash
+docker compose up -d --no-deps --force-recreate bridge
+```
 
-| Síntoma | Qué comprobar |
-| --- | --- |
-| Roko no conecta con el bridge | Comprueba que ambos contenedores comparten `roko-cli-bridge`, que Roko usa `http://cli-bridge:4000/v1` y que `ROKO_BRIDGE_BASE_URL` coincide con el endpoint firmado. Para bridge nativo, usa la dirección alcanzable del host, no `localhost` desde otro contenedor. |
-| Error de clave o contexto firmado | Compara `BRIDGE_API_KEY` con `CLAUDE_BRIDGE_KEY`; revisa que la URL configurada en Roko coincide exactamente con la URL firmada. Tras cambiar `.env`, recrea el contenedor con `docker compose up -d`. |
-| `health` funciona, pero el modelo falla | `health` solo mide disponibilidad HTTP. Comprueba el login del proveedor elegido (`bridge claude auth status` o `bridge codex login status`) y ejecuta el check de sandbox correspondiente. |
-| `login_required` o sesión caducada | Vuelve a autenticar ese proveedor dentro del mismo contenedor/usuario que ejecuta el servicio. En Docker, los logins están en el volumen `logins`; recrear la imagen no los copia desde el host. |
-| `bwrap` o sandbox no disponible | En Docker, reconstruye con el `compose.yaml` del proyecto y ejecuta `bridge check:workspace`. Comprueba compatibilidad del kernel, Docker rootless y políticas de seguridad del host. En Ubuntu nativo, confirma que bubblewrap está instalado. Si el check falla, la shell se bloquea y no hay modo sin sandbox. |
-| Windows `CreateProcessAsUserW` falla | Ejecuta `npm run check:sandbox` desde la cuenta que ejecuta el bridge, revisa la configuración de `CODEX_WINDOWS_SANDBOX` y las políticas de Windows. El modo elevado necesita preparación administrativa. |
-| No aparece el documento editado | Revisa que el proveedor guardó el entregable final bajo `outputs/`, lo declaró en el resultado y que el archivo no está vacío ni excede el límite. Mira los logs del bridge y de Roko; el workspace se elimina al terminar la petición y no es almacenamiento persistente. |
-| Archivo rechazado o sin lectura | Comprueba tamaño, extensión/MIME y dependencias instaladas. El original puede transportarse aunque no exista lector o editor para su formato. Los límites efectivos también dependen de Roko y del cliente web. |
-| Puerto ocupado al iniciar Compose | Cambia `BRIDGE_PUBLISHED_PORT` en `.env` para el acceso local de diagnóstico. La comunicación entre contenedores sigue usando `cli-bridge:4000`. |
+En producción CI sigue [DEPLOY.md](DEPLOY.md), conservando la imagen aprobada. En nativo reinicia el proceso con el nuevo entorno; tras actualizar dependencias usa npm ci y npm run setup:files.
 
-## Logs
+## Verificar streaming y modelo
 
-En Docker usa `docker compose logs -f bridge`; en systemd, `journalctl --user -u ai-librechat-bridge.service -f`. En ejecución manual, observa la terminal donde ejecutaste `npm start`.
+Desde Roko pide una respuesta textual suficientemente larga. El texto aparece cuando el SDK comunica fragmentos compatibles; un bloque completo único puede ser la granularidad real. Las tarjetas deben actualizarse durante operaciones. Las respuestas con archivos esperan validación y pueden mostrar actividad antes de la entrega.
 
-Por defecto los logs limitan los detalles y no imprimen bytes de adjuntos. `BRIDGE_DEBUG_ATTACHMENTS=1` añade nombres, MIME y tamaños de archivos; `BRIDGE_DEBUG_PROVIDER=1` puede incluir comandos o salida acotada del proveedor. Activa esos valores solo para diagnosticar localmente, revisa los logs y vuelve a desactivarlos. No compartas logs que puedan contener prompts, nombres de archivos, rutas o salida del modelo.
+Comprueba /health y las capacidades reasoningReplay/publicProgress/liveText/cliOptions para detectar imágenes antiguas, sin tomar esas banderas como una prueba integral.
+
+Los alias de /v1/models o Langfuse no prueban el modelo backend utilizado. La generación Langfuse registra actualmente el alias solicitado. Una confirmación real requiere un dato de modelo reportado por el proveedor; esta versión no expone un diagnóstico unificado de modelo efectivo. Revisar .env solo confirma la intención configurada.
+
+## Logs y privacidad
+
+Usa docker compose logs -f bridge o journalctl --user -u ai-librechat-bridge.service -f en el servicio nativo. BRIDGE_DEBUG_ATTACHMENTS=1 añade nombres/MIME/tamaños; BRIDGE_DEBUG_PROVIDER=1 puede incluir comando y salida acotados. Son opciones de diagnóstico local, independientes del modo Langfuse.
+
+Las tarjetas pueden incluir detalles técnicos de herramientas dentro del chat autenticado. redacted/debug controla su exportación, no lo que se muestra al usuario. Consulta [OBSERVABILITY.md](OBSERVABILITY.md).
 
 ## Persistencia y copias
 
-El bridge usa los datos persistentes para credenciales de proveedor y ejecución local. En Docker, `docker compose down` conserva volúmenes y `docker compose down -v` los borra. Guarda una copia segura de `.env` y exporta los volúmenes necesarios antes de migrar o borrar la instalación. Las credenciales son secretos: limita quién puede leer las copias.
+En Compose los volúmenes logins y runtime sobreviven a down; down -v los elimina. Conserva copias privadas de .env y credenciales y evita varias instancias usando el mismo directorio OAuth.
 
-Roko es quien conserva conversaciones y archivos reutilizables. Haz copias de seguridad de MongoDB, del almacenamiento de archivos y de los demás volúmenes de Roko con el procedimiento propio de ese despliegue. El workspace temporal del bridge no reemplaza esas copias ni permite reabrir archivos de una petición anterior.
-
-## Reiniciar y actualizar
-
-Después de cambiar variables de entorno o configuración, recrea el servicio. Para actualizar código en Docker, conserva `.env` y ejecuta `docker compose up -d --build`; luego corre los checks para los proveedores activos. Para la instalación nativa, instala las dependencias fijadas con `npm ci` y actualiza el entorno de archivos con `npm run setup:files`.
-
-Evita dos procesos activos que compartan las mismas credenciales de proveedor. Antes de eliminar volúmenes o rotar la clave compartida, actualiza la configuración del bridge y Roko de forma coordinada.
+Roko conserva conversaciones, MongoDB y archivos persistentes. Su backup debe seguir el procedimiento de ese despliegue. Los workspaces temporales del Bridge no sirven para restaurarlos ni recuperar una edición de otra petición.

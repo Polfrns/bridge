@@ -2,6 +2,8 @@
 
 Esta guía instala el bridge en Linux o Windows con Docker Compose. En Windows, Docker Desktop debe usar contenedores Linux. La imagen contiene el runtime Node, los SDK de Claude y Codex y las herramientas de archivos incluidas en el Dockerfile; no hace falta instalar Node o Python en el host.
 
+Describe una instalación Compose local. Si producción usa Bitbucket y una imagen aprobada por digest, sigue [DEPLOY.md](DEPLOY.md) para actualizar o recrear conservando esa imagen. La versión declarada es 0.7.3; consulta [CHANGELOG.md](CHANGELOG.md) para los cambios posteriores del repositorio.
+
 ## Requisitos
 
 - Docker Engine y el complemento Docker Compose en Linux, o Docker Desktop en Windows.
@@ -56,7 +58,7 @@ docker compose exec bridge bridge check:workspace
 docker compose exec bridge bridge health
 ```
 
-El login de dispositivo de Codex puede requerir que la cuenta o el administrador permitan ese método. `check:workspace` prueba el sandbox de shell de Claude y no llama al modelo; `check:sandbox` prueba el sandbox de Codex y necesita su login. `health` solo confirma que el servidor responde. Si el navegador no puede completar el callback de Claude dentro del contenedor, sigue el código o URL que indique el CLI.
+El login de dispositivo de Codex puede requerir que la cuenta o el administrador permitan ese método. `check:workspace` prueba el sandbox de shell de Claude sin login ni inferencia y añade una prueba DOCX si existe el toolkit. `check:sandbox` es una prueba nativa determinista, sin llamada al modelo, aunque prepara un runtime que requiere credenciales Codex. `health` solo confirma vida HTTP, versión y capacidades declaradas. Si el navegador no puede completar el callback de Claude dentro del contenedor, sigue el código o URL que indique el CLI.
 
 ## Conectar Roko/LibreChat
 
@@ -90,7 +92,9 @@ docker compose up -d --build
 docker compose exec bridge bridge check:workspace
 ```
 
-Ejecuta también `bridge check:sandbox` si usas Codex. Cambiar `.env` requiere recrear el servicio; `docker compose up -d` lo hace si detecta el cambio. No ejecutes dos instancias del bridge con el mismo directorio de login al mismo tiempo.
+Ejecuta también `bridge check:sandbox` si usas Codex. Para aplicar únicamente cambios de `.env`, ejecuta `docker compose up -d --no-deps --force-recreate bridge`; un `restart` no carga el entorno nuevo. Cambiar `.env.example` no modifica la instalación activa. El timeout predeterminado es de diez minutos; los modelos y perfiles se resuelven según [SPEC.md](SPEC.md). No ejecutes dos instancias del bridge con el mismo directorio de login al mismo tiempo.
+
+La construcción instala las dependencias del lockfile y ejecuta obligatoriamente `ci/test.sh` en la etapa `ci`, de la que hereda `production`. Si falla una prueba no se produce la imagen final. Para construir solo la etapa de comprobación, sigue [TESTS.md](TESTS.md).
 
 Los chats, agentes y archivos persistentes pertenecen a Roko y a sus volúmenes. El workspace del bridge es temporal por petición y no reemplaza las copias de seguridad de Roko. Para migrar el despliegue, migra por separado las bases de datos/archivos de Roko y restaura o vuelve a autenticar los proveedores.
 

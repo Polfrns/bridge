@@ -1,81 +1,80 @@
+# Pruebas y comprobaciones
 
+## Suite reproducible
 
-## Actividad pública en directo (2026-10-19)
+La referencia completa Linux es la etapa ci del Dockerfile:
 
-`test/live-progress.test.mjs` recorre los adaptadores reales `runClaude` y
-`runCodex`, con SDK simulados y HTTP real firmado. Cruza ambos proveedores con
-Chat Completions y Responses, en streaming y sin streaming. Una barrera mantiene
-el turno pendiente hasta que el cliente haya recibido el comentario; un watchdog
-falla si ese comentario queda retenido. Una variante retiene deliberadamente
-ambos callbacks y comprueba que el watchdog la rechaza antes de liberar el turno.
+```bash
+docker build --target ci --tag bridge-ci-check:local .
+```
 
-También comprueba orden de comentarios/tarjetas, una sola emisión de cada delta,
-IDs y estados V1, intentos separados, secuencias y ciclos Responses, errores sin
-éxito final, timeout, desconexión y cierre del stream Claude. Una segunda barrera
-detiene la validación de artefactos reparados: hay actividad en directo y todavía
-no hay texto final ni bytes descargables. Las pruebas de privacidad rechazan
-thinking, JSON final, contenido de herramientas, rutas, comandos, secretos,
-Base64 y marcadores reservados; comprueban límites, deduplicación y desactivación.
-Los fixtures de `parameters.test.mjs`, `providers.test.mjs` y `server.test.mjs`
-usan el canal público y texto operativo permitido. El relay MCP, HMAC, aislamiento,
-toolkit real, trazas y reparación conservan sus regresiones existentes.
+Construye una imagen de prueba sin levantar servicios ni desplegarla. La imagen production hereda de ci, por lo que un test fallido también bloquea su construcción. El pipeline usa ese mismo recorrido de build.
 
-Comprobaciones realizadas:
+En un entorno Linux ya provisionado:
 
-- `npm ci --ignore-scripts`: instalación de las versiones fijadas, auditoría sin
-  vulnerabilidades. Consultas `npm view` verificaron los últimos SDK publicados,
-  sin cambiar `package.json` ni el lockfile (ver SPEC).
-- Pruebas dirigidas en Windows (actividad, artefactos, adaptadores, parámetros,
-  servidor y progreso): 85 aprobadas, 2 omitidas por plataforma/toolkit, 0 fallos.
-  Incluyen 27 casos de progreso y los controles de resumen con su rechazo en Claude.
-- Suite Linux en un contenedor temporal `ai-librechat-bridge-bridge:latest`, sin
-  red ni credenciales, montando `src/`, `test/`, `scripts/`, `package.json` y `.env.example` en solo
-  lectura; `LANGFUSE_TRACING_ENABLED=false` y
-  `FILE_TEST_PYTHON=/app/runtime-tools/bin/python`:
-  `node --test --test-concurrency=1 --test-timeout=120000 test/*.test.mjs`, 172/172,
-  y `python -m unittest discover -s test -p file_tools_test.py -v`, 9/9.
-  La imagen contiene los mismos SDK fijados, Claude `0.3.291` y Codex `0.161.0`;
-  reutiliza su toolkit Linux. No equivale a reconstruir la imagen de producción.
-- `npm test` en Windows se ejecutó; las pruebas POSIX de workspace fallan al
-  asumir shell Linux o buscar el paquete nativo Linux ausente en Windows. El
-  entorno Python local carece de `pillow_heif` y `py7zr`, y no dispone de
-  LibreOffice/FFmpeg; esos casos pasan con el toolkit del contenedor Linux.
-- `npm run check:workspace` en Windows falla cerrado: el backend Windows
-  configurado exige sandbox elevado para restringir lecturas. No se cambia la
-  política ni se activa un fallback sin sandbox.
-- `npm run check:sandbox` en Windows: aprobado con backend `unelevated`, escritura
-  real en workspace y edición DOCX verificada. Es una prueba nativa determinista,
-  sin inferencia ni llamada al modelo.
-- `git diff --check`: sin errores de whitespace.
+```bash
+npm ci
+npm run setup:files
+sh ci/test.sh
+```
 
-La suite usa eventos y barreras simulados, no sesiones autenticadas de modelos.
-Quedan para el host de despliegue una sesión real por proveedor que verifique los
-comentarios efectivamente emitidos, cancelación del CLI y entrega/reparación de
-archivos y el check de workspace restringido en el host final. No se han desplegado cambios.
+ci/test.sh desactiva tracing externo, ejecuta Node con concurrencia 1 y timeout de 120000 ms por prueba, y después unittest Python. Usa FILE_TEST_PYTHON si el Python provisionado no está en runtime-tools/bin/python.
 
-## Observabilidad v0.7.1
+Para una comprobación dirigida:
 
-Observabilidad v0.7.1 protege clasificación, ciclo de vida, agrupación de sesiones, contexto de servicio autenticado y privacidad antes de OTLP. Véanse TEST-RESULTS.md para comandos/resultados y VERIFY-LANGFUSE.md para verificación de despliegue.
+```bash
+node --test test/langfuse-tools.test.mjs test/live-answer.test.mjs
+```
 
+npm test ejecuta solo las pruebas Node. No sustituye la suite Python ni garantiza que estén presentes las herramientas opcionales. Los tests de toolkit requieren Python provisionado; un caso omitido no equivale a una capacidad validada.
 
-## Observabilidad v0.7.2
+## Cobertura
 
-Entrada y salida textual acotada en observaciones existentes, según modo redacted/debug. El contexto remoto firmado conserva nombre de la traza raíz. Filtro de secretos/binarios también en debug; nuevas pruebas HTTP con SDK/OTLP reales. Versión de servicio 0.7.2, dependencias sin cambios.
+| Área | Regresiones relevantes |
+| --- | --- |
+| HTTP, protocolo e identidad | Bearer/HMAC, aislamiento por propietario, JSON inválido, límites, Responses previo y reasoning replay tras función. |
+| Opciones y proveedores | Presets medium/high, esfuerzos admitidos, precedencia, allowlists, capacidades y desactivación efectiva de búsqueda. |
+| Texto en directo | Claude/Codex × Chat/Responses, fragmentos JSON/Unicode, instantáneas sin duplicados, orden de índices SSE y fallback sin parciales. |
+| Barreras de entrega | Recepción del texto antes de terminar el proveedor; archivos y funciones retenidos hasta validar; reparación sin publicar éxito prematuro. |
+| Fallos y cancelación | Timeout, desconexión, sustitución de texto y JSON final inválido sin final exitoso ni reparación de prosa ya emitida. |
+| Actividad y trazas | Estados/IDs/intentos, un único terminal y cierre; contenido saneado antes de exportar; contexto remoto firmado, aislamiento y métricas. |
+| Sandbox y runtime | Preparación/limpieza, credenciales mínimas, rutas, symlinks, cancelación y launchers simulados. |
+| Toolkit | Documentos e imágenes reales, extracción, conversión, medios y validación con dependencias instaladas. |
 
-Las pruebas nuevas comprueban límites de contenido, filtrado antes de exportar y no mutación de datos. Roko ejecuta processStream real sobre un grafo de prueba y comprueba trazas, títulos, usuarios, errores y cancelación. Bridge verifica por HTTP la firma y el padre remoto con SDK real. Filestore mantiene sus 12 herramientas y pruebas de acceso. Véanse TEST-RESULTS.md y OBSERVABILITY-V072.md.
+live-answer.test.mjs incluye 33 casos. Sus barreras HTTP fallan si el texto se retiene hasta completar el proveedor. Las esperas de reparación decodifican registros V1 y comprueban workspace.validate/started/attempt=2; no dependen de traducciones ni búsquedas dentro del Base64.
 
+langfuse-tools.test.mjs identifica la actualización terminal por metadata.state y exige una sola. Las actualizaciones de contenido saneado pueden precederla; no se presupone updates[0].metadata.
 
-## Hotfix Responses v0.7.3
+Los tests de privacidad de exportación no deben confundirse con la política del chat: los detalles públicos de herramientas pueden verse en la conversación autenticada mientras redacted los excluye de Langfuse.
 
-Los elementos de input con type=reasoning se aceptan como metadatos de transporte y se omiten al construir el transcript CLI. Las cinco regresiones nuevas cubren Codex/Claude, estado opaco, continuación con previous_response_id, y roundtrip HTTP real tras function_call_output con/sin streaming. Las herramientas no se ejecutan en el normalizador. El estado opaco no se descifra ni se convierte en instrucciones.
+## Último resultado registrado
 
+Sobre el código previo a esta revisión documental se ejecutó:
 
-## Langfuse metering regression (2026-10-16)
+```bash
+docker build --target ci --tag bridge-langfuse-check:local .
+```
 
-Content privacy tests assert SDK JSON usage/cost survives both content modes,
-reject secret fields, nesting, malformed JSON and invalid numbers, and verify
-export copies never mutate live attributes. Known Roko Bridge aliases suppress
-duplicate accounting while direct models retain measurements.
+Resultado: **210 pruebas Node y 9 pruebas Python aprobadas, sin omisiones**. También pasaron 23 pruebas dirigidas de ciclo de vida, observabilidad, privacidad y exportación real a un colector local. Estos resultados sustituyen los recuentos históricos de entregas anteriores; no son una ejecución nueva por editar documentación.
 
-`test/metering-export.test.mjs` uses the real Langfuse SDK with a local OTLP
-collector to assert numeric metrics reach export and replica inference is disabled.
+## Comprobaciones del host
+
+| Comando | Qué comprueba |
+| --- | --- |
+| npm run check:workspace | Sandbox restringido de Claude; edición DOCX adicional si existe toolkit. Sin login ni inferencia. |
+| npm run check:sandbox | Ejecución nativa determinista del sandbox Codex, sin llamar al modelo. La preparación usa el runtime OAuth de Codex. |
+| docker compose exec bridge bridge health | Vida HTTP, versión y capacidades declaradas. |
+| docker compose exec bridge bridge claude auth status | Estado del login Claude. |
+| docker compose exec bridge bridge codex login status | Estado del login Codex. |
+
+Ejecuta los checks en el host y con el usuario finales. Un launcher simulado en CI no prueba las restricciones reales del kernel.
+
+En las comprobaciones Windows anteriores, check:sandbox pasó con unelevated y una prueba DOCX. check:workspace falló cerrado porque la restricción de lecturas exigía un backend elevado. La suite completa nativa también encontró supuestos POSIX y dependencias multimedia/Python ausentes; la suite Linux de la imagen sí pasó completa. No extrapoles ese resultado a todo host Windows.
+
+## Pendiente de validación integral
+
+Los adaptadores de inferencia de las pruebas usan SDK simulados; el SDK real de Langfuse se prueba con colectores locales. No se han validado aquí sesiones reales Claude/Codex, granularidad real de texto, selección backend confirmada por el proveedor, navegador Roko, MCP externo, Langfuse desplegado ni Bitbucket/VM de producción.
+
+La prueba integral debe recorrer desde Roko una respuesta textual, llamada de función con continuación, creación/edición de archivo y cancelación por proveedor. Verifica bytes descargables, parciales reales y sandbox del host. El script histórico scripts/Test-Bridge.ps1 envía solo Bearer y no firma identidad; no basta para probar el contrato de inferencia actual.
+
+No se atribuyen a este repositorio los resultados históricos de suites de Roko o Filestore. La lista operativa de observabilidad está en [OBSERVABILITY.md](OBSERVABILITY.md).

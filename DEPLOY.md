@@ -1,79 +1,89 @@
-# Actualización v0.7.2
+# CI y despliegue de producción
 
-Instrucciones actuales de esta entrega: [OBSERVABILITY-V072.md](OBSERVABILITY-V072.md). Incluye variables, pipelines existentes, recreación por imagen fijada y rollback.
+Esta guía describe [bitbucket-pipelines.yml](bitbucket-pipelines.yml) y los scripts [ci/](ci/). Para una instalación local usa [DOCKER.md](DOCKER.md). No mezcles comandos de rebuild local con una instalación gestionada por imagen aprobada.
 
-## Histórico v0.7.1
+## Pipeline actual
 
-# Despliegue v0.7.1
+Las ramas distintas de main ejecutan tests/build en Bitbucket Cloud mediante bash ci/cloud-build.sh bridge test, sin publicar una imagen desplegable.
 
-Los archivos son repositorios completos de código, sin datos persistentes, logins ni .env. Mantén tus volúmenes y tu .env actuales. No ejecutes `down -v`. Antes de cambiar nada conserva una copia del código/configuración y etiqueta las imágenes actualmente instaladas como rollback. No se han aplicado cambios a tus servidores desde este entorno.
+main ejecuta secuencialmente:
 
-## 1. Variables
+1. Tests/build en Cloud y publicación: deployment image-publish, runtime Cloud v3, step 2x y servicio Docker con 6144 MB. Ejecuta bash ci/cloud-build.sh bridge publish.
+2. Despliegue: deployment production en runner Linux Shell con etiquetas self.hosted, linux.shell y roko.bridge.prod. Ejecuta bash /opt/deploy-and-clean.sh bash ci/deploy.sh bridge.
 
-Bridge y Roko deben conservar el mismo BRIDGE_API_KEY / CLAUDE_BRIDGE_KEY que ya usas. Esta clave también fija la identidad de Sessions: si la rotas, las sesiones nuevas tendrán otra seudonimización. No cambies sus valores al copiar .env.example.
+La imagen production hereda de la etapa ci del Dockerfile. Un fallo de las pruebas bloquea la publicación y el siguiente paso. No se ejecutan tests/build en la VM como alternativa automática. /opt/deploy-and-clean.sh es un wrapper externo del servidor y su implementación no forma parte de este repositorio.
 
-Añade la misma nueva OBSERVABILITY_TRACE_SECRET aleatoria (>=32 caracteres) a los .env de Roko, Bridge y Filestore. Puedes generarla localmente con `openssl rand -hex 32`; no la publiques ni la pongas en runtime-config.yaml. El secreto de trazado no sustituye ninguna API key ni permiso.
+La suite actual y su último resultado están en [TESTS.md](TESTS.md). No se certifican aquí ejecuciones de Bitbucket ni el estado de la VM.
 
-En Roko configura OBSERVABILITY_TRACE_TARGETS con las URL exactas de servicios autorizados. Ejemplo cuando Bridge comparte la red Docker cli y Filestore es una VM:
+## Variables de Bitbucket
 
-```dotenv
-ROKO_BRIDGE_BASE_URL=http://cli-bridge:4000/v1
-OBSERVABILITY_TRACE_TARGETS=http://cli-bridge:4000/v1,http://192.168.1.50:8000/mcp
-OBSERVABILITY_FILE_NAMES=false
-OTEL_TRACES_SAMPLER=always_on
-LANGFUSE_FORCE_FLUSH_ON_DISPOSE=false
-```
+| Ámbito | Variable | Uso |
+| --- | --- | --- |
+| Repository | CI_IMAGE_REPOSITORY | Referencia completa de imagen privada, sin esquema, tag ni digest; por ejemplo crg.apkg.io/tu-workspace/bridge. |
+| Deployment production | BRIDGE_DEPLOY_DIR | Directorio real con el .env privado y el estado del despliegue; por ejemplo /home/rokoface/services/bridge. |
+| Deployment image-publish | CI_REGISTRY_PUSH_USER / CI_REGISTRY_PUSH_TOKEN | Credenciales de publicación para un registro sin autenticación nativa; token Secured. |
 
-Sustituye la IP y el path MCP por los reales de tu configuración. Una URL autoriza su path y descendientes, con el mismo esquema/origen/puerto; no autoriza otros dominios. No uses comodines. El código mantiene las restricciones SSRF y de red existentes: esta variable no autoriza conexiones que el cliente MCP ya tenga prohibidas. Si Bridge sigue en host.docker.internal, usa esa misma URL en ambas variables. No publiques Bridge en 0.0.0.0 para resolver conectividad.
+Los nombres de deployment deben coincidir con el YAML. Cuando el registro es crg.apkg.io y Pipelines proporciona BITBUCKET_PACKAGES_USERNAME/TOKEN, el script usa esas credenciales nativas. Para otro registro utiliza las variables de publicación. Los requisitos comerciales y permisos del registro se consultan en el servicio elegido; no se presuponen en esta guía.
 
-En los tres servicios conserva LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY y LANGFUSE_TRACING_ENABLED=true. Bridge/Filestore ya pasan el .env o las variables necesarias; Roko añade las nuevas variables al override incluido. Para verificar cada operación usa OTEL_TRACES_SAMPLER=always_on; muestrear menos es una elección operativa posterior.
+Las credenciales de publicación pertenecen al paso image-publish. La VM solo necesita lectura del registro. La referencia de variables está en [ci/variables.example](ci/variables.example).
 
-Los proyectos siguen siendo independientes por sus credenciales: Roko+Bridge usan las del proyecto Roko y Filestore las del proyecto Filestore. Para obtener un árbol común configura deliberadamente las mismas credenciales de proyecto en los tres servicios. Los nombres de proyecto en la interfaz no son variables que haya que enviar. No existe un árbol navegable único entre dos proyectos distintos.
+## Preparar la VM
 
-## 2. Bridge (en la carpeta del repo)
+El runner debe disponer de Bash, Python 3.10+, Git, flock, Docker y Compose v2, acceso al daemon local y al registro. No necesita instalar los SDK o toolkit en el host: están en la imagen.
+
+Configura una etiqueta roko.bridge.prod que seleccione únicamente la VM prevista. Autentica Docker en el HOME del usuario del runner con credenciales de lectura. Provisiona el wrapper /opt/deploy-and-clean.sh conforme a tu instalación.
+
+Mantén el servicio anterior arrancado para el primer despliegue automático: el script necesita detectar su proyecto Compose y guardar una imagen de recuperación. Conserva el .env privado, los volúmenes logins/runtime y el nombre del proyecto. Comprueba la configuración sin imprimir sus secretos:
 
 ```bash
+cd /home/rokoface/services/bridge
 docker compose -f compose.yaml config -q
-docker compose -f compose.yaml build bridge
-docker compose -f compose.yaml up -d --no-deps bridge
 docker compose -f compose.yaml ps
-docker compose -f compose.yaml exec bridge node scripts/healthcheck.mjs
 ```
 
-Mantén el nombre de proyecto y los volúmenes logins/runtime originales. No hay que repetir los logins de Codex/Claude. Docker instala las dependencias desde el lockfile actualizado. En ejecución local: `npm ci`, `npm test`; no copies node_modules ni runtime-tools de Windows a Linux.
+Las variables nuevas y los recursos privados montados desde el host deben provisionarse antes del despliegue. No se copian desde .env.example ni se incluyen en la imagen.
 
-## 3. Roko (en la carpeta de tu instalación)
+## Garantías del despliegue
 
-Mantén docker-compose.yml, el override incluido y runtime-config.yaml con tus ajustes de entorno. El ZIP incluye la configuración base del adjunto; no reemplaces tus volúmenes, usuarios ni historial. El build requiere los archivos de todos los workspaces adjuntos, incluido packages/roko-server.
+El artifact ci-result.json identifica servicio, commit, build, digest e ID de imagen. Los scripts validan el registro esperado y las etiquetas de revisión/servicio, descargan por digest para linux/amd64 y comprueban la configuración de imagen. Un pipeline ya desplegado o superado por otro más reciente se omite.
+
+flock serializa activaciones. Las definiciones Compose se guardan en .ci-deploy/releases y se ejecutan con el directorio original y su .env; solo se recrea bridge, sin build ni dependencias. Se conservan volúmenes y logins.
+
+Una descarga fallida no sustituye el contenedor. Si falla la activación o salud, el script intenta restaurar la imagen y definición previas. El healthcheck comprueba HTTP e identidad de imagen; no prueba login, inferencia ni restricciones del sandbox.
+
+## Gestión después del primer despliegue CI
+
+Los scripts pueden estar únicamente en el checkout del runner. Ejecuta desde un checkout que contenga ci/ y señala el directorio desplegado:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml config -q
-docker compose -f docker-compose.yml -f docker-compose.override.yml build api
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --no-deps api
-docker compose -f docker-compose.yml -f docker-compose.override.yml ps
+export BRIDGE_DEPLOY_DIR=/home/rokoface/services/bridge
+bash ci/compose.sh bridge ps
+bash ci/compose.sh bridge logs --tail=100 bridge
+bash ci/compose.sh bridge exec bridge bridge health
 ```
 
-El Dockerfile ejecuta scripts/patch-observability.cjs después de copiar el código y antes de la compilación. No elimina el parche al podar dependencias. El Dockerfile.multi también lo instala en la imagen final. Para instalación fuera de Docker: `npm ci`, `npm run observability:patch`, `npm run frontend` y tu comando backend habitual. Repite el parche después de cada reinstalación de node_modules. El build se detiene si cambia agents 3.2.35; revisa esa nueva versión antes de desplegar, para evitar exportar datos sin protección.
+ci/compose.sh usa el snapshot y la imagen fijados por el despliegue actual; requiere que exista .ci-deploy/current.
 
-Si no usas Bridge configura una OBSERVABILITY_SESSION_SECRET persistente de >=32 caracteres en Roko. Cuando existe CLAUDE_BRIDGE_KEY, se usa esta última para que coincida con el Bridge.
-
-## 4. Leedeo-Filestore mediante Bitbucket
-
-Conserva el archivo bitbucket-pipelines.yml: main → runner self.hosted/linux.shell → `/opt/test.sh /home/leedeo-filestore-user/ci/leedeo-filestore main` → `/opt/deploy.sh /home/leedeo-filestore-user/leedeo-filestore/leedeo-filestore docker-compose.yml main`. Es el archivo original, sin alteraciones.
-
-Añade las credenciales y OBSERVABILITY_TRACE_SECRET al .env del despliegue que ya utiliza /opt/deploy.sh. No se dispone del contenido de esos scripts externos y no se han sustituido ni ejecutado. Sube estos cambios al repositorio y haz que pasen por tu revisión/merge habitual a main; el pipeline realizará el despliegue. Antes del merge valida en la máquina del runner:
+Para aplicar un cambio de .env conservando esa imagen:
 
 ```bash
-docker compose -f docker-compose.yml config -q
-docker compose -f docker-compose.test.yml config -q
+bash ci/compose.sh bridge config -q
+bash ci/compose.sh bridge up -d --no-deps --no-build --pull never --force-recreate bridge
 ```
 
-Servicios de producción: db con image postgres:16 y web con build; tests: db-test con image y test con build/target:test. No se añade un servicio solo con environment. Mantén los directorios chroma_db, filestores_data, uploads y el volumen pgdata originales. Si necesitas comprobarlo tras el pipeline: `docker compose ps` y `docker compose logs --tail=50 web` desde el directorio de despliegue.
+No uses un simple restart para cargar variables nuevas. No reconstruyas manualmente en la VM una versión distinta de la aprobada.
 
-## 5. Verificación y rollback
+## Verificación y recuperación
 
-Sigue VERIFY-LANGFUSE.md y TEST-RESULTS.md. Nunca imprimas el Compose expandido ni los .env en logs compartidos.
+Tras desplegar, comprueba versión/capacidades, estado OAuth y los checks del sandbox para los proveedores activos. Recorre una petición desde Roko, incluyendo función externa y archivo si se usan: [OPERATIONS.md](OPERATIONS.md) y [OBSERVABILITY.md](OBSERVABILITY.md).
 
-Para rollback, restaura el código y las imágenes etiquetadas antes del cambio, además de tu override anterior si lo cambiaste, y vuelve a ejecutar `up -d --no-deps` para bridge/api/web en su proyecto original. En Filestore revierte el commit mediante el flujo de revisión de main para que los mismos scripts de pipeline reconstruyan la versión previa. No hay migraciones de esquema de esta actualización. No restaures ni borres bases de datos o volúmenes para revertir observabilidad.
+Para volver a la release anterior disponible:
 
-Desactivar solo exportación: LANGFUSE_TRACING_ENABLED=false y recrear los servicios. Las tarjetas e inferencia siguen disponibles en Bridge. Para desactivar tarjetas usa BRIDGE_ACTIVITY_ENABLED=false y/o ROKO_BRIDGE_ACTIVITY_ENABLED=false; las observaciones del Bridge siguen activas independientemente de la visibilidad de tarjetas.
+```bash
+export BRIDGE_DEPLOY_DIR=/home/rokoface/services/bridge
+bash ci/deploy.sh bridge rollback
+```
+
+Ejecuta rollback solo cuando quieras restaurarla. Otra opción es revertir el commit y pasar de nuevo por main. Conserva .ci-deploy y las imágenes actual/anterior; no hagas una limpieza que las elimine.
+
+No borres .env, logins, volúmenes ni bases de datos para revertir código u observabilidad. Roko y Filestore tienen pipelines y persistencia propios; estos scripts no despliegan sus cambios desde el repositorio Bridge.

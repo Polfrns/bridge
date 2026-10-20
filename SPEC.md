@@ -1,292 +1,116 @@
-# Especificación funcional del bridge
+# Contrato actual del bridge
 
-Este documento define el contrato actual entre Roko/LibreChat y el servicio bridge: identidad, protocolos, ejecución de proveedores, archivos, herramientas, aislamiento y límites. No es una promesa de que las APIs subyacentes de OpenAI, Anthropic o los CLI acepten todos sus parámetros. El código y las pruebas del repositorio son la referencia ejecutable.
+Referencia del código actual: versión declarada 0.7.3 más los cambios locales descritos en [CHANGELOG.md](CHANGELOG.md). Los SDK instalados están fijados en [package.json](package.json) y [package-lock.json](package-lock.json): Claude Agent SDK 0.3.291 y Codex SDK 0.161.0. Son versiones del proyecto, no una afirmación sobre las últimas publicaciones del registro.
 
-## 1. Propósito y alcance
+## Identidad y runtime
 
-El bridge adapta las solicitudes de modelos personalizados de LibreChat a los SDK de Claude Code y Codex. Proporciona:
+`GET /health` es público. Las demás rutas requieren `Authorization: Bearer <BRIDGE_API_KEY>`, con clave de al menos 32 caracteres y comparación en tiempo constante.
 
-- API HTTP compatible con las formas usadas por OpenAI Chat Completions y Responses.
-- Autenticación del cliente de Roko y verificación HMAC de usuario, tenant y conversación.
-- Sesiones de proveedor y directorios de trabajo temporales aislados por petición.
-- Transporte y preparación de adjuntos; selección, validación y retorno de entregables.
-- Relay de llamadas a funciones para que Roko ejecute herramientas configuradas por LibreChat.
-- Búsqueda web de Codex y una herramienta de shell limitada para Claude.
-- Ejecución opcional con dependencias locales de documentos, imágenes, archivos comprimidos, audio y vídeo.
+Cada inferencia requiere `x-roko-context` y `x-roko-signature`. El primero contiene JSON en Base64URL con tenantId, userId, conversationId, model, options y timestamp; el segundo es HMAC-SHA256 hexadecimal del valor exacto del primero, con la clave compartida. Se comprueban tipos, longitudes, correspondencia de modelo y antigüedad máxima de diez minutos antes de iniciar el proveedor. No existe identidad anónima de respaldo.
 
-El bridge no guarda conversaciones ni archivos permanentes, no despliega servicios MCP adicionales, no ejecuta modelos alojados de OpenAI para File Search/Code Interpreter y no implementa almacenamiento de LibreChat. Roko sigue siendo dueño del historial y de los archivos persistentes.
+El propietario de estado deriva de tenant, usuario, conversación y proveedor mediante HMAC. Los alias de un proveedor comparten ese ámbito, sin compartir una sesión persistente del modelo.
 
-## 2. Componentes
+Cada petición crea workspace, HOME, cachés y temporales nuevos. Se copia únicamente el material OAuth necesario; no se importan instrucciones, skills, MCP ni historiales del host. El acceso al fichero OAuth se serializa por proveedor; una renovación segura puede conservarse sin sobrescribir cambios concurrentes. Se limpia el runtime al finalizar o cancelar normalmente.
 
-| Componente | Responsabilidad |
+La continuidad depende del historial y archivos reenviados por Roko. Responses conserva estado en memoria por propietario durante 30 minutos, con máximo de 1000 entradas. Reiniciar el proceso invalida esos identificadores.
+
+## HTTP
+
+| Ruta | Contrato |
 | --- | --- |
-| Roko/LibreChat | UI, sesiones, historial, opciones, configuración de agentes/herramientas, almacenamiento de archivos y descarga de entregables. Firma el contexto de cada petición. |
-| Servidor bridge | Autentica, valida identidad y parámetros, prepara runtime, enruta proveedor, adapta protocolos, aplica límites y limpia la petición. |
-| Claude Agent SDK | Bucle de agente Claude, lectura/edición dentro del workspace, herramienta MCP interna de ejecución y salida estructurada. |
-| Codex SDK y CLI | Bucle de agente Codex, shell, herramientas del CLI y sandbox del sistema operativo. El CLI Codex también aporta el ejecutor nativo del sandbox que usa la herramienta de shell de Claude. |
-| Toolkit Python | Lectura, vistas, extracción segura, conversión y validación de formatos con los módulos y ejecutables instalados. |
+| `GET /health` | Vida y versión; capacidades `reasoningReplay`, `publicProgress`, `liveText`, `cliOptions`. No comprueba login ni sandbox. |
+| `GET /v1/models` | Alias con controles y esfuerzo predeterminado por proveedor. |
+| `POST /v1/chat/completions` | Mensajes, adjuntos, funciones y SSE. |
+| `POST /v1/responses` | Mensajes, archivos/imágenes, funciones, SSE y `previous_response_id`. |
 
-El SDK proporciona el runtime del proveedor. La API compatible con LibreChat, firma de contexto, reglas de aislamiento, preparación de adjuntos, contrato de entregables y despliegue son responsabilidad de este bridge.
+Las inferencias reciben un objeto JSON. Valores predeterminados: cuerpo máximo 20 MiB, dos peticiones activas y timeout de 600000 ms. `MAX_CONCURRENT_REQUESTS` y `REQUEST_TIMEOUT_MS` ajustan los dos últimos. Desconexión o timeout abortan proveedor y procesos asociados.
 
-## 3. Identidad, autenticación y aislamiento
+| HTTP | Motivo habitual |
+| --- | --- |
+| 400 | JSON, modelo, opciones o estado de continuación inválidos. |
+| 401 | Bearer o identidad firmada inválidos. |
+| 413 | Tamaño máximo excedido. |
+| 415 | Content-Type distinto de JSON. |
+| 422 | Tipo de contenido, herramienta o parámetro no soportado. |
+| 429 | Concurrencia agotada. |
+| 502 | Fallo del proveedor o resultado inválido. |
+| 503 | Login OAuth ausente/inválido. |
+| 504 | Timeout antes de enviar cabeceras; código `request_timeout`. |
 
-### 3.1 HTTP
+Los errores usan un objeto `error`. Una vez iniciado SSE, el error se comunica dentro del stream; no puede cambiarse el estado HTTP ya enviado. Cancelación y timeout tienen códigos distintos.
 
-Las rutas de inferencia y descubrimiento de modelos requieren:
+## Modelos y opciones
 
-```http
-Authorization: Bearer <BRIDGE_API_KEY>
+| Alias | Selección sin variables de perfil | Esfuerzo |
+| --- | --- | --- |
+| `claude-max` | `CLAUDE_MODEL` o default del CLI | medium |
+| `claude-max-fast` | haiku | low |
+| `claude-max-deep` | opus | high |
+| `gpt-codex` | `CODEX_MODEL` o default del CLI | medium |
+| `gpt-codex-fast` | `CODEX_MODEL` o default del CLI | low |
+| `gpt-codex-deep` | `CODEX_MODEL` o default del CLI | high |
+
+Precedencia: modelo general del entorno, preset, variable FAST/DEEP, opciones firmadas, campos explícitos del cuerpo. Dentro del cuerpo, las formas anidadas reasoning/text sustituyen sus equivalentes planos y `cli_options` tiene la última precedencia. Los valores Auto/unset mantienen el preset.
+
+`cli_options` y las opciones firmadas admiten únicamente model, reasoning_effort, verbosity, reasoning_summary y web_search. El modelo backend debe pertenecer a los configurados en el entorno, los presets del proveedor o su lista `*_ALLOWED_MODELS`. Permisos, rutas y sandbox se deciden en el servidor.
+
+| Control | Codex | Claude |
+| --- | --- | --- |
+| reasoning_effort | minimal, low, medium, high, xhigh, max, ultra, persistent | low, medium, high, xhigh, max |
+| verbosity | low, medium, high | No |
+| reasoning_summary | auto, concise, detailed, none | No |
+| web_search nativo | Booleano | true se rechaza; usar relay de Roko |
+
+La aceptación por el adaptador no garantiza disponibilidad para cada modelo/cuenta. El bridge propaga opciones nativas: Codex recibe model/modelReasoningEffort y configuración de resumen/verbosidad; Claude recibe model/effort y persistSession=false.
+
+Se toleran valores neutros heredados como temperature=1, top_p=1, penalizaciones=0 y n=1. Otros valores o controles no implementados —incluidos límites de tokens y stop— se rechazan explícitamente. No se simula su efecto. Las instrucciones de búsqueda se derivan del interruptor efectivo de la petición y no permanecen activadas en el historial al deshabilitarlo.
+
+## Relay y herramientas internas
+
+Las funciones se declaran con esquema de tipo function. El modelo devuelve una decisión message/tool_call; el bridge valida nombre, argumentos y elección de herramienta antes de emitir la llamada OpenAI. Roko ejecuta la función y devuelve su resultado. No se ejecutan funciones externas durante la normalización.
+
+Responses acepta `function_call` y `function_call_output` conservando call_id. Los elementos de entrada `reasoning`, incluido encrypted_content, son metadatos de transporte: se aceptan y omiten del transcript CLI. No se descifran ni se convierten en instrucciones o herramientas. Los demás tipos no soportados siguen rechazándose.
+
+Codex utiliza su sandbox workspace-write, approvalPolicy=never y búsqueda/red según la opción efectiva. Claude recibe Read/Write/Edit limitados al workspace y el MCP interno `mcp__workspace__execute`, con descripción pública opcional. No requiere otro servidor ni puerto.
+
+La shell de Claude utiliza el sandbox nativo de Codex, con red desactivada, permisos limitados y comprobación previa de aislamiento. Linux usa shell POSIX y Windows PowerShell. No hay fallback sin sandbox. Comandos: máximo 16000 caracteres, timeout de 1 a 120 segundos y captura máxima de 1 MiB, con respuesta textual adicionalmente acotada. El entorno heredado se filtra y se cancelan procesos hijos.
+
+## Streaming de texto y actividad
+
+Para respuestas ordinarias el proveedor declara primero:
+
+```json
+{"artifact":{"task":"answer","status":"text","files":[]},"response":{"text":"Respuesta"}}
 ```
 
-La clave debe tener al menos 32 caracteres. La comparación del bearer token se hace en tiempo constante. `GET /health` es una ruta de vida sin autenticación y no expone credenciales ni identidad.
+Con relay, response.action=message debe preceder a response.text. El decodificador extrae únicamente ese texto; no realiza una revisión semántica ni ejecuta otro modelo revisor. Claude usa eventos parciales raíz de texto o StructuredOutput; Codex usa instantáneas acumuladas agent_message y emite solo el sufijo nuevo.
 
-### 3.2 Contexto firmado de Roko
+Chat envía `delta.content`; Responses envía `response.output_text.delta`, con índices y secuencias coherentes con la actividad recibida. No se repite el texto al finalizar. Thinking, mensajes de subagentes, argumentos de otras herramientas y JSON interno no son fuentes de texto de respuesta.
 
-Cada inferencia requiere estos headers:
+Si el SDK no comunica fragmentos compatibles, o el orden del sobre no permite identificarlos, se conserva el fallback atómico. No se garantiza granularidad por token. Sin streaming se devuelve una respuesta completa.
 
-| Header | Contenido |
-| --- | --- |
-| `x-roko-context` | JSON serializado y codificado en Base64URL con `tenantId`, `userId`, `conversationId`, `model`, `options` y `timestamp`. |
-| `x-roko-signature` | HMAC-SHA256 hexadecimal del valor exacto de `x-roko-context`, usando `BRIDGE_API_KEY`. |
+Después de publicar texto, un fallo, cancelación, sustitución de instantánea o sobre inválido termina con error, sin éxito final ni reparación que reescriba la respuesta visible. Responses marca el mensaje incompleto y emite response.failed; no se guarda una continuación exitosa.
 
-El bridge comprueba firma, edad máxima de diez minutos, modelo igual al del cuerpo, tipos y longitudes de identificadores antes de resolver el proveedor o consultar estado de Responses. No existe modo anónimo ni fallback a una identidad compartida.
+Archivos, unsupported y decisiones de función esperan su validación. El bloque `LIBRECHAT_OUTPUT_V1` debe comenzar el contenido de una entrega de archivos; no se le antepone prosa. Las tarjetas y comentarios públicos siguen circulando durante inferencia y reparación. Su contrato y privacidad están en [OBSERVABILITY.md](OBSERVABILITY.md).
 
-El propietario de estado se deriva con HMAC del tenant, usuario, conversación y proveedor. Los alias rápido/profundo del mismo proveedor comparten el ámbito propietario, pero **no una sesión del modelo persistida entre solicitudes**. Un cambio de tenant, usuario, conversación o proveedor crea otro ámbito.
+## Adjuntos y entregables
 
-### 3.3 Runtime de cada petición
+Los bloques de imagen/archivo aceptan URLs de datos Base64. Una URL remota no autoriza al servidor a descargarla. Se conserva el original con nombre saneado, MIME y bytes; lectores administrados generan vistas/texto acotados sin ejecutar código subido automáticamente.
 
-Cada llamada crea un directorio aleatorio dentro de la rama de runtime derivada de la identidad. Dentro se crean workspace, HOME, caché, configuración y temporales nuevos. Se copia el archivo OAuth necesario del proveedor a ese HOME efímero; no se copian sus instrucciones globales, sesiones anteriores, configuración MCP ni skills del host.
+Entrada: 10 archivos, 15 MiB por archivo y 20 MiB de cuerpo total, incluido Base64. Salida: 10 archivos, 15 MiB por archivo y 15 MiB combinados. El inventario del workspace también está limitado.
 
-El acceso al archivo OAuth compartido se serializa por proveedor. Si el CLI refresca credenciales, solo la renovación se conserva y solo si otro proceso no ha cambiado entretanto el archivo original. El workspace y el HOME temporal se eliminan al terminar, incluso al producirse error o cancelación normales.
+El sobre de artefactos declara task=edit/create/answer/code, status=files/text/unsupported y una lista de rutas. Los finales van en outputs/ y los auxiliares en work/. Un entregable debe existir, ser regular, no vacío, no ser un enlace y haber cambiado frente al snapshot inicial. Un script auxiliar no sustituye a un documento editado. El código fuente solicitado expresamente sí puede ser un entregable task=code.
 
-La continuidad del chat la proporciona el historial enviado por Roko y los archivos que Roko vuelve a adjuntar. No depende de que el workspace siga existiendo. Un reinicio, limpieza o petición nueva no recupera un directorio de trabajo anterior.
+La recogida aplica límites, comprobaciones de rutas y firmas básicas; el toolkit valida formatos cuando está disponible. La actividad informa validationStatus=checked/partial/unavailable. No debe interpretarse un validador ausente como comprobación estructural realizada. Incluso checked no demuestra calidad semántica ni fidelidad visual.
 
-El estado de `previous_response_id` de Responses vive en memoria del proceso durante 30 minutos, se limita a 1000 entradas y se vincula al propietario. Se pierde al reiniciar el bridge; el cliente debe enviar de nuevo el historial cuando el identificador ya no exista o haya expirado.
+Ante un resultado inválido hay un intento de reparación en el mismo runtime, salvo que ya se haya publicado prosa. No puede sustituirse una entrega rechazada por texto ordinario; debe repararse o declararse unsupported. Las instrucciones permiten explicar partes no disponibles junto con entregables válidos, sin afirmar un éxito completo.
 
-## 4. API HTTP
+Office depende de bibliotecas Python y LibreOffice; OCR de Tesseract; medios de FFprobe/FFmpeg. Transcripción requiere el extra multimedia y pesos Faster-Whisper locales, sin descarga durante peticiones. Los archivos comprimidos se inspeccionan contra escapes, enlaces, dispositivos, cifrado y excesos; no se extraen recursivamente archivos internos. Véanse [src/file-formats.mjs](src/file-formats.mjs) y [scripts/file-tools.py](scripts/file-tools.py).
 
-Todas las rutas salvo `/health` requieren Bearer. Las inferencias también requieren contexto firmado.
+## Configuración y verificación
 
-| Método y ruta | Autenticación | Comportamiento |
-| --- | --- | --- |
-| `GET /health` | No | Devuelve estado de vida y banderas de capacidades. No verifica OAuth, permisos efectivos de Docker ni sandbox del kernel. |
-| `GET /v1/models` | Bearer | Devuelve los modelos virtuales disponibles. |
-| `POST /v1/chat/completions` | Bearer + HMAC | Acepta mensajes, adjuntos base64, funciones y streaming SSE. |
-| `POST /v1/responses` | Bearer + HMAC | Acepta texto, mensajes, imágenes/archivos base64, funciones, streaming SSE y continuación acotada con `previous_response_id`. |
+[.env.example](.env.example) documenta modelos, autenticación, límites, herramientas y telemetría. Cambiarlo no modifica el entorno activo. Código en Docker requiere rebuild; cambios de .env requieren recreación. En producción CI se conserva la imagen fijada: [DEPLOY.md](DEPLOY.md).
 
-El cuerpo debe ser JSON. Tamaño máximo predeterminado: 20 MiB. Máximo predeterminado de peticiones activas en el proceso: 2; ajustable con `MAX_CONCURRENT_REQUESTS`. Tiempo máximo predeterminado: 180000 ms; ajustable con `REQUEST_TIMEOUT_MS`. El cliente desconectado o el timeout abortan la llamada al proveedor y su ejecución.
+health solo mide disponibilidad HTTP. check:workspace comprueba el ejecutor restringido de Claude, sin login ni inferencia; añade edición DOCX si el toolkit está instalado. check:sandbox comprueba el sandbox nativo de Codex sin llamar a un modelo, aunque su preparación usa el runtime con credenciales Codex. Los checks deben ejecutarse con el usuario y host reales.
 
-### 4.1 Códigos de error más relevantes
-
-| HTTP | Uso |
-| --- | --- |
-| 400 | JSON, modelo, contexto o parámetros inválidos; estado de Responses desconocido/expirado. |
-| 401 | Bearer ausente/incorrecto o firma/contexto Roko inválido. |
-| 413 | Cuerpo, adjunto o entregables por encima de sus límites. |
-| 415 | Petición de inferencia no JSON. |
-| 422 | Tipo de contenido/herramienta o parámetro que el runtime CLI no admite. |
-| 429 | Máximo de concurrencia alcanzado. |
-| 502 | Fallo del proveedor u output inválido. |
-| 503 | OAuth de fichero ausente o inválido. |
-
-Los errores usan un objeto `error` JSON. En streaming, un fallo después de iniciar la respuesta se transmite como evento final de error y finalización.
-
-## 5. Modelos y parámetros
-
-Identificadores virtuales:
-
-| Identificador | Proveedor | Predeterminado |
-| --- | --- | --- |
-| `claude-max` | Claude | Modelo configurado por host o default del CLI; esfuerzo medio. |
-| `claude-max-fast` | Claude | Sonnet o `CLAUDE_FAST_MODEL`; esfuerzo bajo. |
-| `claude-max-deep` | Claude | Opus o `CLAUDE_DEEP_MODEL`; esfuerzo alto. |
-| `gpt-codex` | Codex | Modelo configurado por host o default del CLI; esfuerzo medio. |
-| `gpt-codex-fast` | Codex | Modelo configurado por host/perfil rápido; esfuerzo bajo. |
-| `gpt-codex-deep` | Codex | Modelo configurado por host/perfil profundo; esfuerzo alto. |
-
-El anfitrión puede fijar modelos backend mediante variables de entorno y listas allowlist. El orden de selección es: default del host, preset virtual, opción efectiva firmada por Roko y opción explícita permitida en la petición. El esquema de permisos nunca proviene del usuario.
-
-Controles procesados: `model`, `reasoning_effort`, `verbosity`, `reasoning_summary` y `web_search`, según capacidades del proveedor. Codex admite esfuerzos hasta las opciones que define el CLI, verbosidad low/medium/high, resúmenes auto/concise/detailed/none y búsqueda web nativa. Claude admite el esfuerzo compatible con su SDK/CLI; no expone aquí verbosidad, resumen de razonamiento ni búsqueda nativa. Claude puede recibir búsqueda de Roko mediante el relay de función.
-
-El bridge rechaza con error explícito valores de generación incompatibles o no implementados, incluidos cambios en temperature, top-p, penalizaciones, límites de tokens y parámetros de muestreo. Los valores neutros que LibreChat pueda enviar por defecto se toleran. El bridge no inventa un control equivalente si el CLI no lo ofrece.
-
-## 6. Herramientas y llamadas de función
-
-### 6.1 Relay de LibreChat
-
-El bridge admite esquemas de herramientas de tipo `function`. Incluye en las instrucciones del agente las definiciones permitidas y la elección auto/required/none. Si el agente elige una función, el bridge devuelve una llamada con el nombre y argumentos JSON en el protocolo OpenAI; Roko ejecuta la función según su propia configuración y devuelve el resultado en el siguiente turno.
-
-El relay no ejecuta por sí mismo las funciones MCP de Roko. Tipos de herramientas alojadas que no sean funciones se rechazan, salvo búsqueda nativa de Codex cuando la petición la configura. File Search y Code Interpreter alojados de OpenAI no son herramientas implementadas por este bridge.
-
-### 6.2 Shell y archivos
-
-Codex ejecuta comandos y Python desde su sandbox en el workspace temporal. Claude recibe Read/Write/Edit restringidos a ese workspace y una herramienta MCP creada en memoria, `mcp__workspace__execute`, para shell y herramientas binarias.
-
-En Linux, la shell de Claude corre dentro del sandbox nativo de Codex, con filesystem raíz restringido, acceso de escritura únicamente al workspace, red desactivada y recursos de lectura explícitos. Codex usa su sandbox de workspace; su red está desactivada por defecto y puede habilitarse en la petición que activa búsqueda web nativa. El bridge valida la prueba del sandbox de Claude antes de ejecutar el primer comando. En Windows nativo, usa PowerShell y el sandbox Windows configurado por el administrador. Si no se prueba el sandbox de Claude, la petición se bloquea; no existe fallback sin aislamiento.
-
-Los comandos tienen máximo 16000 caracteres y timeout individual de 1 a 120 segundos. Salida capturada máxima de 1 MiB; la respuesta de herramienta se acota aún más. Se eliminan variables de credenciales, proxies y entorno que no estén permitidas. Se cancelan los procesos hijos al abortar, exceder tiempo o límite.
-
-## 7. Adjuntos y archivos
-
-### 7.1 Entrada
-
-Se aceptan como adjuntos imágenes y archivos en bloques de contenido con URL de datos `data:<mime>;base64,...`. URL remota de imagen/archivo no equivale a una descarga del servidor y se rechaza. Se mantienen nombre, MIME y bytes, con saneamiento del nombre antes de crear el archivo local.
-
-Máximo: diez archivos, 15 MiB de bytes por archivo, 20 MiB para el cuerpo HTTP total. El Base64 aumenta el tamaño en el transporte. Roko y el cliente web pueden aplicar límites menores.
-
-El bridge guarda el original. El toolkit lee formatos conocidos y genera texto/vistas acotadas. Para Office, PDF, imágenes y archivos comprimidos usa bibliotecas instaladas; para documentos antiguos puede generar una copia convertida. Audio/vídeo se inspecciona con FFprobe y se pueden extraer fotogramas con FFmpeg. OCR necesita Tesseract. Transcripción requiere el extra multimedia y pesos de Whisper instalados por el administrador: no se descargan durante una petición.
-
-Los archivos comprimidos se inspeccionan antes de extraer: se rechazan enlaces/rutas de escape, dispositivos, cifrado y excesos de entradas/tamaño. Los comprimidos internos se conservan sin extracción recursiva. Código adjunto no se ejecuta salvo instrucción explícita del usuario.
-
-El mapa MIME de `src/file-formats.mjs`, los lectores de `scripts/file-tools.py` y sus pruebas definen el catálogo actual. Tener extensión reconocida significa que se puede transportar y clasificar; no asegura lector, edición o conversión completa.
-
-### 7.2 Salida
-
-El agente devuelve un sobre estructurado con texto de respuesta y metadatos de tarea/archivos. Para crear o editar, los archivos finales deben estar en `outputs/`; los scripts auxiliares se guardan en `work/`. Cada salida declarada debe existir, ser regular, no estar vacía, haber cambiado respecto al snapshot inicial y pasar el validador disponible. Una extensión de código no puede sustituir a un documento que se solicitó editar.
-
-Máximo: diez archivos por respuesta, 15 MiB por archivo y 15 MiB combinados. El bridge devuelve bytes Base64, nombre y MIME a Roko. La validación estructural no juzga si el texto revisado es correcto ni conserva de forma garantizada todas las funciones/layouts propietarios de los formatos.
-
-Si un output declarado es inválido o falta, el bridge hace un intento de reparación en el mismo runtime. Solo entonces se devuelve respuesta de éxito; si no se puede validar, la solicitud termina con error/limitación sin publicar una afirmación de éxito.
-
-## 8. Despliegue y configuración
-
-### Docker Compose
-
-El Dockerfile instala un runtime Linux, Node, los SDK y binarios opcionales, Python/toolkit, LibreOffice, FFmpeg, Tesseract y bubblewrap. Compose ejecuta como usuario no root, con raíz de imagen de solo lectura, volúmenes de login y datos, límite de procesos y puerto del host ligado a loopback.
-
-Para integrar Roko en otro proyecto Compose del mismo host, se conecta su API a la red externa `roko-cli-bridge` y se usa el alias interno `http://cli-bridge:4000/v1`. El puerto local publicado es solo para comprobación desde el host; no debe usarse como URL de contenedor.
-
-Para bubblewrap anidado, el servicio declara `SYS_ADMIN` y ajustes de seccomp/AppArmor específicos del contenedor. Esto amplía el perfil de ese servicio frente a Docker predeterminado. No se usa modo privileged, socket de Docker ni bind mount del host. VM, Docker rootless, kernel o políticas de seguridad pueden impedir el sandbox anidado; el check debe ejecutarse en el host real y una falla bloquea shell.
-
-### Instalación nativa
-
-Node.js 22 o superior. Python 3.10+ para el toolkit. Ubuntu requiere herramientas de sandbox/conversión del sistema; Windows usa PowerShell y el sandbox nativo de Codex. `npm ci` instala dependencias fijadas; `npm run setup` crea clave local si falta; `npm run setup:files` instala el entorno Python. Las dependencias y ejecutables deben ser nativos de ese sistema operativo.
-
-### Variables principales
-
-`BRIDGE_API_KEY`, `BRIDGE_HOST`, `BRIDGE_PORT`, `BRIDGE_DATA_DIR`, `REQUEST_TIMEOUT_MS`, `MAX_CONCURRENT_REQUESTS`, `CLAUDE_MODEL`, `CODEX_MODEL`, perfiles FAST/DEEP, directorios OAuth, allowlists, rutas a LibreOffice/FFmpeg/Tesseract, idioma OCR y ruta al modelo Whisper. La referencia completa está en [.env.example](.env.example).
-
-## 9. Comprobaciones
-
-| Comando | Verifica | Requiere login del modelo |
-| --- | --- | --- |
-| `npm test` | Tests automáticos de protocolo, proveedores, archivos, herramientas, parámetros, aislamiento, wrappers y sandbox simulado. | No |
-| `npm run check:workspace` | Sandbox de workspace de Claude, escritura real en workspace y edición/validación DOCX si toolkit disponible. | No |
-| `npm run check:sandbox` | Sandbox de Codex y la prueba de ejecución de ese flujo. | Sí, Codex |
-| `docker compose exec bridge bridge health` | Liveness HTTP solamente. | No |
-| `docker compose exec bridge bridge check:workspace` | Prueba de workspace desde el contenedor. | No |
-| `docker compose exec bridge bridge check:sandbox` | Prueba de sandbox Codex en el contenedor. | Sí, Codex |
-
-Un test que simula un launcher no es una prueba de un kernel real. La instalación final debe pasar los checks nativos en su Docker/Ubuntu/Windows, además de una petición al proveedor que se vaya a usar.
-
-## 10. Registros y depuración
-
-Los errores incluyen categoría y código. Se registran los fallos de herramientas y del proveedor de forma acotada. `BRIDGE_DEBUG_ATTACHMENTS=1` registra el modelo, nombre, MIME y bytes de cada adjunto, nunca sus bytes. `BRIDGE_DEBUG_PROVIDER=1` permite incluir comando/salida acotados en logs locales de Codex; deja el ajuste desactivado salvo diagnóstico controlado. No envíes logs con credenciales o documentos a terceros.
-
-## 11. No objetivos y límites funcionales
-
-- El bridge no es una API genérica para todos los proveedores OpenAI-compatible; valida los dos runtimes CLI y modelos virtuales declarados.
-- No garantiza que todos los tipos MIME del navegador sean interpretables o editables por el agente.
-- No mantiene el filesystem entre peticiones y no es una alternativa a MongoDB/almacenamiento de archivos de Roko.
-- No ofrece una garantía de virtualización/aislamiento de kernel equivalente a una VM dedicada. El sandbox comparte kernel y usuario de servicio.
-- No transforma toda opción de generación de LibreChat en opción válida de CLI. Controles incompatibles fallan claramente.
-- No promete equivalencia de modelos, razonamiento, búsqueda o calidad de salida entre Claude y Codex.
-
-## 12. Criterio para cambios
-
-Un cambio de protocolo debe preservar las dos formas de respuesta, la identidad firmada, el control de adjuntos, la frontera de herramientas y los límites de tamaño. Un cambio del workspace debe fallar cerrado, cancelar y limpiar procesos/archivos en el flujo normal y tener una prueba de regresión significativa. Un cambio de formatos debe documentar conversión, validación y dependencias opcionales; no debe presentar solo la etiqueta MIME como prueba de capacidad.
-
-## 13. Actividad pública en directo (2026-10-19)
-
-Los adaptadores disponen de dos callbacks por petición: `onBridgeActivity` para
-operaciones y `onProviderProgress` para comentarios públicos. Ambos atraviesan los
-buffers de `collect()`, del turno Codex y de la validación/reparación de artefactos.
-La respuesta final conserva el sobre estructurado y solo se publica después de
-validar los archivos. La actividad no ejecuta funciones MCP ni modifica el historial
-de instrucciones del proveedor.
-
-Fuentes verificadas en los tipos y código de los SDK fijados:
-
-- Claude Agent SDK `0.3.291`: bloques `text` de mensajes `assistant` de nivel raíz
-  sin error, `tool_use_summary.summary` y operaciones `tool_use`/`tool_result`.
-  Se ignoran thinking, mensajes de subagentes, stdout, eventos de razonamiento
-  interno y el texto del resultado estructurado como fuentes de actividad.
-- Codex SDK `0.161.0`: `item.completed` con `reasoning.text` (documentado en el SDK
-  como resumen), mensajes públicos `agent_message` completos y operaciones reales.
-  Este SDK no declara `phase` en `AgentMessageItem`: no se interpreta un delta o un
-  snapshot JSON como comentario. El último mensaje completo sigue siendo el
-  candidato a respuesta final y debe superar el contrato de artefactos.
-
-Que un texto sea público no garantiza que carezca de datos de archivos. Por eso
-`safeProgressText` admite únicamente frases operativas completas de una lista
-cerrada en español/inglés, con máximo de 240 caracteres; rechaza el resto, incluidos
-JSON, secretos, rutas, comandos y delimitadores reservados. Esto limita expresamente
-la variedad de comentarios literales que se retransmiten. Si no hay un comentario
-seguro, el inicio de una operación real produce una frase fija por su clasificación,
-por ejemplo «Estoy leyendo un archivo» o «Estoy validando el resultado». No se usa
-otro modelo ni se deducen éxitos a partir de texto libre.
-
-Por petición se admiten hasta 100 comentarios SDK, deduplicados por proveedor, ID
-y número de intento. Continúa el límite de 1000 operaciones, con hasta una frase
-por inicio y sus registros V1 de inicio/fin. Los comentarios no se convierten en
-registros. Los registros `[[ROKO_BRIDGE_TOOL_V1:...]]` mantienen sus IDs opacos,
-duraciones, estados y número de intento; el segundo intento tiene IDs distintos.
-Los cierres por error/cancelación no generan comentarios de éxito. La actividad no
-añade nombres de archivos ni datos de entrada/salida; sigue aplicándose la política
-existente de metadatos optativos para tarjetas.
-
-Los callbacks publican en un único historial ordenado:
-
-- Chat streaming: cada entrada llega inmediatamente en `delta.reasoning_content`.
-- Responses streaming: un elemento reasoning, con un ciclo
-  `response.reasoning_summary_part.added`, `response.reasoning_summary_text.delta`,
-  `response.reasoning_summary_text.done`, `response.reasoning_summary_part.done`
-  por entrada. `summary_index` crece desde cero, con un ID común y números de
-  secuencia consecutivos para todos los eventos. El elemento se cierra al terminar;
-  si falla después de emitir actividad se cierra y se envía `response.failed`.
-- Sin streaming: el mismo historial aparece una vez en `reasoning_content` o en
-  `output[type=reasoning].summary`, en orden de recepción. El progreso ya enviado
-  no se repite como delta al terminar. Las instantáneas finales de Responses
-  conservan el historial como exige ese protocolo.
-
-`BRIDGE_ACTIVITY_ENABLED=false` desactiva comentarios y tarjetas públicas, sin
-desactivar la instrumentación privada. En Codex, `reasoning_summary=none` desactiva los
-comentarios SDK y las frases derivadas, conservando las tarjetas V1 existentes.
-Claude conserva el rechazo explícito de ese parámetro no admitido.
-Después de abortar se descartan comentarios y nuevos éxitos; aún puede enviarse el
-cierre fallido/cancelado de una tarjeta abierta si el cliente sigue conectado.
-HMAC, ámbitos de identidad, políticas de sandbox y límites de archivos no cambian.
-
-La consulta al registro npm el 2026-10-19 devolvió Claude `0.3.303` y Codex `0.163.0`.
-Se mantienen las versiones fijadas por el proyecto. `npm ci --ignore-scripts`
-reconcilió la instalación local de Codex, que era `0.160.1`, con el lockfile `0.161.0`.
-La [documentación oficial del SDK](https://learn.chatgpt.com/docs/codex-sdk)
-describe `runStreamed`; los tipos instalados son la referencia para estos eventos.
-
-
-
-## Observabilidad v0.7.1
-
-Observabilidad v0.7.1: exportación privada, contexto HMAC por servicio y operaciones basadas en eventos reales. Véanse CHANGELOG.md y LIMITATIONS.md. Los permisos y datos enviados al modelo no cambian.
-
-
-## Observabilidad v0.7.2
-
-Entrada y salida textual acotada en observaciones existentes, según modo redacted/debug. El contexto remoto firmado conserva nombre de la traza raíz. Filtro de secretos/binarios también en debug; nuevas pruebas HTTP con SDK/OTLP reales. Versión de servicio 0.7.2, dependencias sin cambios.
-
-Las pruebas nuevas comprueban límites de contenido, filtrado antes de exportar y no mutación de datos. Roko ejecuta processStream real sobre un grafo de prueba y comprueba trazas, títulos, usuarios, errores y cancelación. Bridge verifica por HTTP la firma y el padre remoto con SDK real. Filestore mantiene sus 12 herramientas y pruebas de acceso. Véanse TEST-RESULTS.md y OBSERVABILITY-V072.md.
-
-
-## Hotfix Responses v0.7.3
-
-Los elementos de input con type=reasoning se aceptan como metadatos de transporte y se omiten al construir el transcript CLI. Las cinco regresiones nuevas cubren Codex/Claude, estado opaco, continuación con previous_response_id, y roundtrip HTTP real tras function_call_output con/sin streaming. Las herramientas no se ejecutan en el normalizador. El estado opaco no se descifra ni se convierte en instrucciones.
-
-
-## Langfuse metering hotfix (2026-10-16)
-
-At the export boundary, usage_details and cost_details retain only recognized
-nonnegative finite numeric metrics. Exported content remains sanitized; live
-model input and output are unchanged. Roko generations for the six known Bridge
-aliases export zero usage/cost and usageAccounting=bridge_replica so Bridge is
-the sole accounting source. Direct Roko model measurements remain intact. New
-aliases and cache/reasoning detail normalization require separate integration.
+Las pruebas reproducibles y sus límites están en [TESTS.md](TESTS.md). Las restricciones funcionales están en [LIMITATIONS.md](LIMITATIONS.md).

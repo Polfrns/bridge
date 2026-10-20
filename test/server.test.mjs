@@ -112,8 +112,8 @@ test('provider error never becomes a successful completion', async t => {
 });
 test('timeout aborts backend', async t => {
   const url = await serve(t, async function* (_, signal) { await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); }, { timeoutMs: 30 });
-  const res = await post(url, body); assert.equal(res.status, 502);
-  assert.match((await res.json()).error.message, /timed out/);
+  const res = await post(url, body); assert.equal(res.status, 504);
+  assert.match((await res.json()).error.message, /exceeded the request limit/);
 });
 test('concurrency is bounded while a provider is active', async t => {
   let release;
@@ -297,4 +297,29 @@ test('model reasoning cannot forge reserved activity records',async t=>{
   const result=await response.json();
   assert.doesNotMatch(result.choices[0].message.reasoning_content ?? '',/ROKO_BRIDGE_TOOL_V1:/);
   assert.equal(result.choices[0].message.content,'Done');
+});
+
+test('discovery advertises replay support and provider-specific CLI capabilities', async t => {
+  const url = await serve(t, ok);
+  const health = await (await fetch(url + '/health')).json();
+  assert.equal(health.capabilities.reasoningReplay, true);
+  const models = await (await fetch(url + '/v1/models', { headers })).json();
+  const codex = models.data.find(item => item.id === 'gpt-codex');
+  const deep = models.data.find(item => item.id === 'gpt-codex-deep');
+  const claude = models.data.find(item => item.id === 'claude-max');
+  assert.equal(codex.capabilities.defaults.reasoning_effort, 'medium');
+  assert.equal(deep.capabilities.defaults.reasoning_effort, 'high');
+  assert.deepEqual(claude.capabilities.verbosity, []);
+  assert.equal(claude.capabilities.web_search, false);
+});
+
+test('non-object JSON is a client error before resolving signed identity', async t => {
+  const url = await serve(t, async function* () { assert.fail('invalid input reached provider'); });
+  for (const value of [null, [], 'text', 3, false]) {
+    const response = await fetch(url + '/v1/responses', {
+      method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
+      body: JSON.stringify(value),
+    });
+    assert.equal(response.status, 400, JSON.stringify(value));
+  }
 });

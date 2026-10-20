@@ -2,6 +2,8 @@
 
 Esta guía es para ejecutar Node directamente en el host, sin Docker. En producción, Docker Compose suele simplificar las dependencias: consulta [DOCKER.md](DOCKER.md). No reutilices `node_modules`, `runtime-tools`, rutas ni credenciales nativas de Windows en Ubuntu, ni a la inversa.
 
+Describe el código actual con versión declarada 0.7.3. Los cambios locales posteriores están en [CHANGELOG.md](CHANGELOG.md). Para el pipeline de producción usa [DEPLOY.md](DEPLOY.md).
+
 ## Requisitos comunes
 
 - Node.js 22 o superior, con npm.
@@ -54,7 +56,7 @@ npm test
 npm start
 ```
 
-`check:workspace` valida el sandbox de Claude; `check:sandbox` valida el de Codex y requiere login Codex. Ejecuta los checks en la misma máquina y con el mismo usuario que ejecutará el bridge.
+`check:workspace` valida el sandbox restringido de Claude, sin login ni inferencia; añade una comprobación DOCX si existe toolkit. `check:sandbox` valida el sandbox nativo de Codex sin llamar al modelo; su preparación usa credenciales Codex. Ejecuta los checks en la misma máquina y con el mismo usuario que ejecutará el bridge. `npm test` ejecuta solo Node; la suite completa Linux con Python está en [TESTS.md](TESTS.md).
 
 ### Arranque automático con systemd (opcional)
 
@@ -92,7 +94,7 @@ npm test
 npm start
 ```
 
-Para el login de Codex, usa el método que admita la cuenta y el CLI instalado. El sandbox Windows puede funcionar en modo no elevado; `CODEX_WINDOWS_SANDBOX=elevated` requiere la preparación y permisos de administrador descritos por el propio sandbox. No ejecutes el bridge sin sandbox si la comprobación falla.
+Para el login de Codex, usa el método que admita la cuenta y el CLI instalado. El sandbox Codex puede funcionar en modo no elevado; la restricción de lecturas exigida por el ejecutor de Claude puede requerir un backend elevado. `CODEX_WINDOWS_SANDBOX=elevated` necesita la preparación y permisos de administrador del sandbox. Si la comprobación falla, no hay fallback sin aislamiento. La suite nativa Windows tiene limitaciones de plataforma y dependencias descritas en [TESTS.md](TESTS.md).
 
 Si el bridge nativo corre en Windows y Roko está en Docker Desktop en el mismo host, configura Roko para usar `http://host.docker.internal:4000/v1` y define `BRIDGE_HOST` en `.env` con una interfaz accesible desde Docker. Restringe el acceso al puerto en el firewall de Windows a la red necesaria. Si ambos se ejecutan en Docker, sigue [DOCKER.md](DOCKER.md).
 
@@ -101,3 +103,5 @@ Si el bridge nativo corre en Windows y Roko está en Docker Desktop en el mismo 
 Tras actualizar el proyecto, vuelve a ejecutar `npm ci` y `npm run setup:files`. Para habilitar transcripción multimedia, instala el extra opcional `npm run setup:files -- --media` y configura `BRIDGE_WHISPER_MODEL` con la ruta a un modelo Faster-Whisper que ya esté disponible localmente. No se descarga un modelo durante una petición.
 
 Para conservar credenciales, `.env` y el directorio de login del proveedor, guarda copias seguras fuera del repositorio. No sincronices esas rutas entre sistemas operativos.
+
+Tras cambiar `.env`, reinicia el proceso Node con el entorno actualizado. El archivo de ejemplo no se aplica automáticamente. Los modelos, perfiles y esfuerzos actuales están en [README.md](README.md) y su precedencia en [SPEC.md](SPEC.md). Para actividad y Langfuse sigue [OBSERVABILITY.md](OBSERVABILITY.md).

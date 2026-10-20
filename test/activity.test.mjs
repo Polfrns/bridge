@@ -28,7 +28,7 @@ test('structured tool-card events contain only bounded, opaque metadata', () => 
   assert.match(record, /^\[\[ROKO_BRIDGE_TOOL_V1:[A-Za-z0-9_-]+\]\]\n$/);
   const encoded = record.match(/:([A-Za-z0-9_-]+)\]\]/)[1];
   const decoded = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-  assert.deepEqual(Object.keys(decoded).sort(), ['id','operation','provider','state','type','v']);
+  assert.deepEqual(Object.keys(decoded).sort(), ['detailCode','id','operation','provider','state','type','v']);
   assert.equal(decoded.state, 'started');
   assert.equal(decoded.provider, 'codex');
   assert.doesNotMatch(record + JSON.stringify(decoded), /secret|shadow|confidential|PASSWORD/);

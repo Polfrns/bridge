@@ -1,4 +1,6 @@
+import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
+import { createAnswerStream } from './answer-stream.mjs';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { WorkspaceExecutor, workspaceFileAllowed } from './workspace-executor.mjs';
@@ -16,7 +18,7 @@ function workspaceResultMetadata(type, block) {
   try {
     const text=typeof block.content==='string' ? block.content : (block.content ?? []).filter(x=>x.type==='text').map(x=>x.text).join('');
     const result=JSON.parse(text);
-    return Number.isInteger(result.exitCode) ? {exitCode:result.exitCode} : {};
+    return {...(Number.isInteger(result.exitCode)?{exitCode:result.exitCode}:{}),...(Number.isFinite(result.durationMs)&&result.durationMs>=0?{durationMs:result.durationMs,timingSource:'execution'}:{})};
   } catch {return {};}
 }
 
@@ -24,13 +26,15 @@ function workspaceResultMetadata(type, block) {
 export function claudeWorkspaceServer(sdk, executor, signal, diagnostics) {
   return sdk.createSdkMcpServer({ name: 'workspace', version: '1.0.0', tools: [sdk.tool(
     'execute', 'Execute shell commands in the isolated request workspace. Use provisioned Python, LibreOffice, FFmpeg and Tesseract to edit real files. POSIX sh on Linux; PowerShell on native Windows. No network, package installs, or background processes. Save deliverables in outputs/ and helpers in work/.',
-    { command: z.string().min(1).max(16000), timeout_ms: z.number().int().min(1000).max(120000).optional() },
+    { description: z.string().max(240).optional().describe('Brief public explanation of what this particular operation is for; no command lines or internal paths.'), command: z.string().min(1).max(16000), timeout_ms: z.number().int().min(1000).max(120000).optional() },
     async ({ command, timeout_ms }) => {
       try {
+        const started = performance.now();
         const result = await executor.execute(command, { signal, timeout: timeout_ms ?? 60000 });
+        const durationMs = Math.max(0, performance.now() - started);
         if (result.exitCode !== 0) diagnostics.push({ type: 'workspace_execution', exitCode: result.exitCode, category: (result.stderr || result.stdout || 'command failed').slice(-1200) });
         if (diagnostics.length > 8) diagnostics.shift();
-        const output = { ...result, stdout: result.stdout.slice(0, 48000), stderr: result.stderr.slice(-16000), truncated: result.stdout.length > 48000 || result.stderr.length > 16000 };
+        const output = { ...result, durationMs, stdout: result.stdout.slice(0, 48000), stderr: result.stderr.slice(-16000), truncated: result.stdout.length > 48000 || result.stderr.length > 16000 };
         return { content: [{ type: 'text', text: JSON.stringify(output) }], isError: result.exitCode !== 0 };
       } catch (error) {
         if (signal.aborted) throw signal.reason ?? error;
@@ -54,6 +58,7 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
   try {
     for (const path of ['outputs', 'work']) await mkdir(resolve(cwd, path), { recursive: true });
     const diagnostics = [];
+    const answer = createAnswerStream(request, signal);
     let session;
     const imageBlocks = await Promise.all((request.visionImages ?? []).map(async item => ({
       type: 'image', source: { type: 'base64', media_type: item.mimeType, data: (await readFile(item.path)).toString('base64') },
@@ -64,13 +69,18 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
     const completed = await completeArtifactRun(async repair => {
       signal.throwIfAborted();
       const content = [{ type: 'text', text: repair ?? request.prompt }, ...(repair ? [] : [...imageBlocks, ...pdfBlocks])];
+      const toolDurations = new Map();
+      const recordDuration = async input => {
+        if (Number.isFinite(input.duration_ms) && input.duration_ms>=0 && toolDurations.size<1000) toolDurations.set(input.tool_use_id,input.duration_ms);
+        return {};
+      };
       const options = {
         cwd, env: claudeIsolatedEnv(env), abortController,
         tools: ['Read', 'Write', 'Edit'], allowedTools: ['Read', 'Write', 'Edit', EXEC_TOOL],
         mcpServers: { workspace: claudeWorkspaceServer(sdk, executor, abortController.signal, diagnostics) }, strictMcpConfig: true,
-        settingSources: [], includePartialMessages: false, maxTurns: 40,
+        settingSources: [], includePartialMessages: request.stream === true, maxTurns: 40,
         // PreToolUse also guards tools pre-approved by allowedTools or SDK defaults.
-        hooks: { PreToolUse: [{ matcher: '^(Read|Write|Edit)$', hooks: [async input => {
+        hooks: { PostToolUse:[{hooks:[recordDuration]}], PostToolUseFailure:[{hooks:[recordDuration]}], PreToolUse: [{ matcher: '^(Read|Write|Edit)$', hooks: [async input => {
           if (await workspaceFileAllowed(cwd, input.tool_input?.file_path)) return {};
           return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'File access is restricted to this request workspace; outside paths and symlinks are denied.' } };
         }] }] },
@@ -89,23 +99,54 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
       const stream = sdk.query({ prompt, options });
       let result;
       const activeTools = new Map();
+      let pendingPurpose;
+      const partialBlocks = new Map();
+      const partialMessages = new Set();
+      let partialMessageId;
       try {
         for await (const message of stream) {
           signal.throwIfAborted();
           if (message.session_id) session = message.session_id;
+          if (!repair && message.type === 'stream_event' && !message.parent_tool_use_id) {
+            const event = message.event;
+            if (event?.type === 'message_start') {
+              partialMessageId = event.message?.id ?? message.uuid;
+              partialMessages.add(partialMessageId);
+              partialBlocks.clear();
+            }
+            if (event?.type === 'content_block_start') {
+              const block = event.content_block;
+              if (block?.type === 'text' || block?.type === 'tool_use' && block.name === 'StructuredOutput') {
+                const id = `${partialMessageId}:${event.index}`;
+                partialBlocks.set(event.index,{id,type:block.type});
+                if (block.type === 'text' && block.text) answer.delta(id,block.text);
+              }
+            }
+            if (event?.type === 'content_block_delta') {
+              const block = partialBlocks.get(event.index);
+              if (block?.type === 'text' && event.delta?.type === 'text_delta') answer.delta(block.id,event.delta.text);
+              if (block?.type === 'tool_use' && event.delta?.type === 'input_json_delta') answer.delta(block.id,event.delta.partial_json);
+            }
+          }
           if (message.type === 'tool_use_summary' && request.cliOptions.reasoning_summary !== 'none') {
             request.onProviderProgress?.({provider:'claude',id:message.uuid,text:message.summary,attempt:repair ? 2:1});
           }
-          // The SDK exposes tool starts/results as distinct messages. Only safe tool
-          // names and states are emitted: no arguments, command text or file paths.
+          // The SDK exposes tool starts/results separately. Chat and telemetry
+          // project this event independently; export privacy never alters the chat.
           if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
-            for (const block of message.message.content) {
+            for (const [index, block] of message.message.content.entries()) {
+              if (!repair && !message.error && !message.parent_tool_use_id && block.type === 'text' && (message.message.id || message.uuid) && !partialMessages.has(message.message.id)) {
+                answer.snapshot(`${message.message.id ?? message.uuid}:${index}`,block.text);
+              }
               if (block.type === 'text' && !message.error && !message.parent_tool_use_id && request.cliOptions.reasoning_summary !== 'none') {
                 request.onProviderProgress?.({provider:'claude',id:message.uuid ?? message.message.id,text:block.text,attempt:repair ? 2:1});
               }
+              if(block.type==='text' && !message.error && !message.parent_tool_use_id) pendingPurpose=block.text && block.text.length<=240 && !/[\r\n]/.test(block.text) && !/^\s*[\[{]/.test(block.text) ? block.text : undefined;
               if (block.type !== 'tool_use' || !block.id) continue;
-              activeTools.set(block.id, {name:block.name,input:block.input});
-              request.onBridgeActivity?.({provider: 'claude', type: block.name, input:block.input, id: block.id, attempt: repair ? 2 : 1, state: 'started'});
+              const description=pendingPurpose;
+              pendingPurpose=undefined;
+              activeTools.set(block.id, {name:block.name,input:block.input,description});
+              request.onBridgeActivity?.({provider: 'claude', type: block.name, input:block.input, description, id: block.id, attempt: repair ? 2 : 1, state: 'started'});
             }
           }
           if (message.type === 'user' && Array.isArray(message.message?.content)) {
@@ -113,8 +154,9 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
               if (block.type !== 'tool_result' || !activeTools.has(block.tool_use_id)) continue;
               const type = activeTools.get(block.tool_use_id);
               activeTools.delete(block.tool_use_id);
-              request.onBridgeActivity?.({provider: 'claude', type:type.name, input:type.input, id: block.tool_use_id, attempt: repair ? 2 : 1,
-                state: block.is_error ? 'failed' : 'completed',
+              request.onBridgeActivity?.({provider: 'claude', type:type.name, input:type.input, description:type.description, id: block.tool_use_id, attempt: repair ? 2 : 1,
+                state: block.is_error ? 'failed' : 'completed', result:block.content,
+                ...(toolDurations.has(block.tool_use_id)?{durationMs:toolDurations.get(block.tool_use_id),timingSource:'provider'}:{}),
                 ...(block.is_error ? {errorCategory:'tool_failed'}:{}),
                 ...workspaceResultMetadata(type.name,block)});
             }
@@ -124,13 +166,16 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
           result = [{ text: message.structured_output !== undefined ? JSON.stringify(message.structured_output) : message.result || '' }, { usage: openAIUsage(message.usage) }];
         }
       } finally {
-        for (const [id, tool] of activeTools) request.onBridgeActivity?.({provider:'claude',type:tool.name,input:tool.input,id,
+        for (const [id, tool] of activeTools) request.onBridgeActivity?.({provider:'claude',type:tool.name,input:tool.input,description:tool.description,id,
           state:signal.aborted ? 'cancelled':'failed',errorCategory:signal.aborted ? 'cancelled':'missing_tool_result',attempt:repair ? 2:1});
         stream.close();
       }
       if (!result) throw new Error('Claude ended without a successful result.');
       return result;
-    }, cwd, before, { onActivity:request.onBridgeActivity, signal, validateFiles, getDiagnostics: () => diagnostics, prepareResult: events => prepareArtifactResult(events, request) });
+    }, cwd, before, { onActivity:request.onBridgeActivity, signal, canRepair:()=>!answer.emitted, validateFiles, getDiagnostics: () => diagnostics, prepareResult: events => {
+      if (answer.emitted) answer.check(JSON.parse(events.filter(e=>typeof e.text==='string').map(e=>e.text).join('')));
+      return prepareArtifactResult(events, request);
+    } });
     for (const event of completed) yield event;
   } finally {
     abortController.abort();

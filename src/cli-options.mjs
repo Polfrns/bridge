@@ -1,8 +1,8 @@
 import { BridgeError } from './protocol.mjs';
 import { MODEL_PRESETS } from './presets.mjs';
 
-const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'];
-const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const CODEX_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent']);
+export const CLAUDE_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 const USER_OPTIONS = ['model', 'reasoning_effort', 'verbosity', 'reasoning_summary', 'web_search'];
 /** @typedef {{provider: 'codex'|'claude', model?: string, reasoning_effort: string, verbosity?: string, reasoning_summary?: string, web_search?: boolean}} CliOptions */
 
@@ -23,7 +23,13 @@ function validatedOptions(value) {
  * Permissions are constructed in the provider adapter and never accepted here.
  */
 export function resolveCliOptions(model, body, contextOptions = {}, env = process.env) {
-  const preset = MODEL_PRESETS[model];
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BridgeError(400, 'Expected a JSON object.');
+  for (const name of ['reasoning', 'text']) {
+    if (body[name] != null && (typeof body[name] !== 'object' || Array.isArray(body[name]))) {
+      throw new BridgeError(400, name + ' must be an object.', 'invalid_cli_option');
+    }
+  }
+  const preset = Object.hasOwn(MODEL_PRESETS, model) ? MODEL_PRESETS[model] : undefined;
   if (!preset) throw new BridgeError(400, 'Unknown bridge model.');
   const defaultModel = env[preset.provider === 'codex' ? 'CODEX_MODEL' : 'CLAUDE_MODEL'];
   const prefix = preset.provider === 'codex' ? 'CODEX' : 'CLAUDE';
@@ -68,7 +74,7 @@ export function resolveCliOptions(model, body, contextOptions = {}, env = proces
 export function applyCliRequestOptions(request, cliOptions) {
   request.cliOptions = cliOptions;
   request.webSearch = cliOptions.web_search ?? request.webSearch;
-  if (request.webSearch) request.system += '\n\nLive web search is available. Search for current facts such as weather and include source URLs.';
+
 }
 
 export function codexThreadOptions(request, cwd) {
@@ -103,4 +109,19 @@ export function codexHostConfig(env = process.env, platform = process.platform) 
 
 export function claudeModelOptions(options) {
   return { ...(options.model ? { model: options.model } : {}), effort: options.reasoning_effort, persistSession: false };
+}
+
+/** Public runtime controls; permissions and backend credentials are never exposed. */
+export function cliCapabilities(model) {
+  const preset = Object.hasOwn(MODEL_PRESETS, model) ? MODEL_PRESETS[model] : undefined;
+  if (!preset) throw new BridgeError(400, 'Unknown bridge model.');
+  const codex = preset.provider === 'codex';
+  return {
+    provider: preset.provider,
+    reasoning_effort: codex ? CODEX_EFFORTS : CLAUDE_EFFORTS,
+    verbosity: codex ? ['low', 'medium', 'high'] : [],
+    reasoning_summary: codex ? ['auto', 'concise', 'detailed', 'none'] : [],
+    web_search: codex,
+    defaults: { reasoning_effort: preset.reasoning_effort },
+  };
 }

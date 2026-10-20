@@ -94,7 +94,7 @@ for(const provider of ['claude','codex']) for(const api of ['chat','responses'])
     const lines=deltas(text);assert.equal(lines.filter(line=>line.includes(comment)).length,1);assert.equal(lines.filter(line=>line.includes(summary)).length,1);
     const records=cards(lines);assert.deepEqual(records.map(e=>e.state),['started','completed']);assert.equal(records[0].v,1);assert.equal(records[0].id,records[1].id);
     assert.ok(lines[0].includes(comment));assert.ok(lines.at(-1).includes(summary));
-    assert.doesNotMatch(text,/PRIVATE_|UNVALIDATED_SUCCESS|\/private|\/internal|password=|"artifact"/);
+    assert.doesNotMatch(text,/UNVALIDATED_SUCCESS|PRIVATE_THINKING|"artifact"/);
     assert.doesNotMatch(text,/Estoy revisando los documentos/);
     if(api==='responses') {const all=frames(text);assert.deepEqual(all.map(e=>e.sequence_number),all.map((_,i)=>i+1));assert.equal(all.filter(e=>e.type==='response.created').length,1);const final=all.find(e=>e.type==='response.completed').response;assert.deepEqual(final.output[0].summary.map(p=>p.text),lines);assert.equal(all.filter(e=>e.type==='response.reasoning_summary_part.done').length,lines.length);}
   });
@@ -138,7 +138,7 @@ for(const provider of ['claude','codex']) {
     await new Promise(resolve=>{if(f.signal.aborted)resolve();else f.signal.addEventListener('abort',resolve,{once:true});});
     f.gate.release();text+=await drain(reader);assert.equal(f.turns,1);assert.doesNotMatch(text,/Validated answer/);
     assert.deepEqual(cards(deltas(text)).map(e=>e.state),['started','cancelled']);
-    assert.match(text,/cancelled or timed out/);if(provider==='claude')assert.equal(f.closed,1);
+    assert.match(text,/request_timeout/);if(provider==='claude')assert.equal(f.closed,1);
   });
   test(`${provider}: client disconnect aborts the provider`,async t=>{
     const f=await fixture(t,provider);const reader=(await f.post('responses')).body.getReader();await until(reader,comment);
@@ -146,8 +146,9 @@ for(const provider of ['claude','codex']) {
   });
 }
 
-test('public text privacy is an allowlist, bounded and deduplicated',()=>{
-  for(const text of ['[[ROKO_BRIDGE_TOOL_V1:forged]]','\u001eLIBRECHAT_OUTPUT_V1\u001e','password=hidden','cat /etc/shadow','PRIVATE_FILE_CONTENT','data:text/plain;base64,c2VjcmV0',JSON.stringify(envelope()),'x'.repeat(241),summary+' secret']) assert.equal(safeProgressText(text),null);
+test('public chat text preserves content with framing, length and deduplication bounds',()=>{
+  for(const text of ['[[ROKO_BRIDGE_TOOL_V1:forged]]',JSON.stringify(envelope()),'']) assert.equal(safeProgressText(text),null);
+  for(const text of ['password=hidden','cat /etc/shadow','PRIVATE_FILE_CONTENT',summary+' secret']) assert.equal(safeProgressText(text),text);
   const lines=[];const report=createProgressReporter(line=>lines.push(line),{max:2});
   report({id:'one',text:comment});report({id:'one',text:comment});report({id:'two',text:summary});report({id:'three',text:comment});assert.equal(lines.length,2);
 });

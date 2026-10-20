@@ -15,14 +15,22 @@ export function codexFailureDiagnostic(item) {
   return null;
 }
 
-export async function* readCodexEvents(events, { toolRelay = false, includeReasoning = false, signal, onProgress, onDiagnostic = () => {}, onItemCompleted = () => {}, onActivity = () => {} } = {}) {
+export async function* readCodexEvents(events, { toolRelay = false, includeReasoning = false, signal, onProgress, onMessageSnapshot = () => {}, onDiagnostic = () => {}, onItemCompleted = () => {}, onActivity = () => {} } = {}) {
   const seen = new Map();
+  const purposes = new Map();
+  let pendingPurpose;
   let completed = false;
   let finalResponse = '';
   for await (const event of events) {
     signal?.throwIfAborted();
     if (['item.started', 'item.completed'].includes(event.type) && event.item?.type) {
+      const toolEvent=['command_execution','file_change','web_search','mcp_tool_call','todo_list','collab_tool_call','image_generation'].includes(event.item.type);
+      if (toolEvent && pendingPurpose && !purposes.has(event.item.id)) {
+        if(purposes.size<1000) purposes.set(event.item.id,pendingPurpose);
+        pendingPurpose=undefined;
+      }
       onActivity({provider: 'codex', type: event.item.type, id: event.item.id,
+        description:purposes.get(event.item.id),
         item: event.item, exitCode: event.item.exit_code, errorCategory: codexFailureDiagnostic(event.item)?.category,
         state: event.type === 'item.started' ? 'started' : codexFailureDiagnostic(event.item) ? 'failed' : 'completed'});
     }
@@ -38,9 +46,11 @@ export async function* readCodexEvents(events, { toolRelay = false, includeReaso
     }
     if (['item.started', 'item.updated', 'item.completed'].includes(event.type) && event.item?.type === 'agent_message') {
       const text = event.item.text || '';
+      onMessageSnapshot(event.item.id, text);
       if (toolRelay) {
+        if(event.type==='item.completed') pendingPurpose=text && text.length<=240 && !/[\r\n]/.test(text) && !/^\s*[\[{]/.test(text) ? text : undefined;
         // No phase field in the pinned SDK. Structured final output is never
-        // progress; the public channel accepts only safe operational sentences.
+        // progress; only public text with non-JSON framing enters that channel.
         if (includeReasoning && event.type === 'item.completed' && text && !/^\s*[\[{]/.test(text)) {
           onProgress?.({provider:'codex',id:event.item.id,text});
         }

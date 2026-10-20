@@ -1,0 +1,212 @@
+{
+  "workspace.inventory": {
+    "label": "Inventario del workspace",
+    "progress": "Estoy registrando los archivos iniciales del workspace para distinguirlos de los que se generen después.",
+    "purpose": "Distinguir los archivos de entrada de los nuevos entregables.",
+    "method": "Recorrer el workspace y registrar las huellas de sus archivos antes de ejecutar el modelo.",
+    "success": "El inventario inicial quedó registrado."
+  },
+  "workspace.list": {
+    "label": "Listar archivos",
+    "progress": "Estoy consultando los archivos disponibles en el workspace.",
+    "purpose": "Localizar archivos disponibles para la tarea.",
+    "method": "Consultar el listado de archivos del workspace.",
+    "success": "La consulta de archivos terminó sin errores."
+  },
+  "workspace.read": {
+    "label": "Leer archivo",
+    "progress": "Estoy consultando el contenido de un archivo del workspace.",
+    "purpose": "Obtener información del archivo que utiliza esta operación.",
+    "method": "Leer el archivo mediante la herramienta del proveedor, sin mostrar su contenido en esta tarjeta.",
+    "success": "La operación de lectura terminó sin errores."
+  },
+  "workspace.write": {
+    "label": "Crear archivo",
+    "progress": "Estoy escribiendo un archivo en el workspace.",
+    "purpose": "Guardar contenido nuevo para la tarea.",
+    "method": "Escribir un archivo mediante la herramienta del proveedor; puede ser un script o un documento de trabajo.",
+    "success": "La escritura terminó sin errores; los entregables se validan por separado."
+  },
+  "workspace.edit": {
+    "label": "Editar archivo",
+    "progress": "Estoy aplicando cambios a un archivo del workspace.",
+    "purpose": "Actualizar un archivo existente para la tarea.",
+    "method": "Aplicar la modificación solicitada por el proveedor sobre el archivo de trabajo.",
+    "success": "La edición terminó sin errores; los entregables se validan por separado."
+  },
+  "workspace.search": {
+    "label": "Buscar en archivos",
+    "progress": "Estoy buscando coincidencias en los archivos del workspace.",
+    "purpose": "Localizar información pertinente dentro de los archivos.",
+    "method": "Buscar coincidencias mediante la herramienta de búsqueda del proveedor.",
+    "success": "La búsqueda terminó sin errores; esto no implica que haya encontrado coincidencias."
+  },
+  "workspace.delete": {
+    "label": "Eliminar archivo",
+    "progress": "Estoy eliminando un archivo del workspace.",
+    "purpose": "Eliminar el archivo seleccionado por esta operación.",
+    "method": "Usar la herramienta de archivos dentro del workspace aislado.",
+    "success": "La eliminación terminó sin errores."
+  },
+  "workspace.mkdir": {
+    "label": "Crear carpeta",
+    "progress": "Estoy creando una carpeta de trabajo.",
+    "purpose": "Preparar una ubicación para archivos de la tarea.",
+    "method": "Crear la carpeta dentro del workspace aislado.",
+    "success": "La creación de la carpeta terminó sin errores."
+  },
+  "file.upload": {
+    "label": "Preparar adjuntos",
+    "progress": "Estoy preparando los adjuntos para que el modelo pueda utilizarlos en su workspace.",
+    "purpose": "Hacer accesibles los archivos adjuntos a esta ejecución.",
+    "method": "Guardar los adjuntos en el workspace y preparar las representaciones admitidas de sus formatos.",
+    "success": "Los adjuntos quedaron preparados para esta ejecución."
+  },
+  "file.download": {
+    "label": "Recoger entregables",
+    "progress": "Estoy recogiendo los archivos de salida seleccionados y comprobando sus límites de entrega.",
+    "purpose": "Preparar los archivos que se devolverán como descargables.",
+    "method": "Recoger los entregables seleccionados y comprobar que estén dentro del workspace y de los límites de tamaño.",
+    "success": "La recogida de entregables terminó; la validación de formato se realiza en el siguiente paso."
+  },
+  "workspace.validate": {
+    "label": "Validar entregables",
+    "progress": "Estoy comprobando los archivos de salida con los validadores disponibles para sus formatos.",
+    "purpose": "Detectar archivos dañados o incompatibles antes de entregarlos.",
+    "method": "Ejecutar las comprobaciones de formato disponibles. Esta validación no evalúa por sí sola la exactitud del contenido.",
+    "success": "El paso de validación terminó sin errores. Las comprobaciones aplicadas dependen de las herramientas disponibles."
+  },
+  "file.deliver": {
+    "label": "Archivo preparado",
+    "progress": "Estoy preparando el archivo descargable.",
+    "purpose": "Devolver un entregable descargable en esta respuesta.",
+    "method": "Adjuntar el archivo recogido después del paso de validación de los entregables.",
+    "success": "El archivo está preparado para enviarse a Roko."
+  },
+  "python.script": {
+    "label": "Script Python",
+    "progress": "Estoy ejecutando un comando Python dentro del workspace para avanzar en la tarea.",
+    "purpose": "Ejecutar el paso de la tarea implementado en Python.",
+    "method": "Invocar el intérprete Python dentro del workspace. El evento no permite determinar con más precisión la finalidad del script.",
+    "success": "La ejecución de Python terminó sin errores; los archivos de salida se validan por separado."
+  },
+  "python.pdf": {
+    "label": "Python · PDF",
+    "progress": "Estoy ejecutando Python con instrucciones que utilizan PyMuPDF para trabajar con documentos PDF.",
+    "purpose": "Ejecutar una operación sobre documentos PDF.",
+    "method": "El comando Python incluye el uso de PyMuPDF; los documentos se procesan dentro del workspace.",
+    "success": "La ejecución terminó sin errores; la validación del PDF es un paso independiente."
+  },
+  "python.docx": {
+    "label": "Python · Word",
+    "progress": "Estoy ejecutando Python con instrucciones que utilizan python-docx para trabajar con documentos Word.",
+    "purpose": "Ejecutar una operación sobre documentos Word.",
+    "method": "El comando Python incluye el uso de python-docx dentro del workspace.",
+    "success": "La ejecución terminó sin errores; la validación del documento es un paso independiente."
+  },
+  "python.spreadsheet": {
+    "label": "Python · Excel",
+    "progress": "Estoy ejecutando Python con instrucciones que utilizan openpyxl para trabajar con hojas de cálculo.",
+    "purpose": "Ejecutar una operación sobre hojas de cálculo.",
+    "method": "El comando Python incluye el uso de openpyxl dentro del workspace.",
+    "success": "La ejecución terminó sin errores; la validación de la hoja de cálculo es un paso independiente."
+  },
+  "python.presentation": {
+    "label": "Python · PowerPoint",
+    "progress": "Estoy ejecutando Python con instrucciones que utilizan python-pptx para trabajar con presentaciones.",
+    "purpose": "Ejecutar una operación sobre presentaciones.",
+    "method": "El comando Python incluye el uso de python-pptx dentro del workspace.",
+    "success": "La ejecución terminó sin errores; la validación de la presentación es un paso independiente."
+  },
+  "python.image": {
+    "label": "Python · Imagen",
+    "progress": "Estoy ejecutando Python con instrucciones que utilizan Pillow para trabajar con imágenes.",
+    "purpose": "Ejecutar una operación sobre imágenes.",
+    "method": "El comando Python incluye el uso de Pillow dentro del workspace.",
+    "success": "La ejecución terminó sin errores; la validación de la imagen es un paso independiente."
+  },
+  "javascript.script": {
+    "label": "Script JavaScript",
+    "progress": "Estoy ejecutando un comando JavaScript con Node.js dentro del workspace.",
+    "purpose": "Ejecutar el paso de la tarea implementado en JavaScript.",
+    "method": "Invocar Node.js dentro del workspace. El evento no permite determinar con más precisión la finalidad del script.",
+    "success": "La ejecución de Node.js terminó sin errores."
+  },
+  "shell.powershell": {
+    "label": "Comando PowerShell",
+    "progress": "Estoy ejecutando una operación de PowerShell dentro del workspace.",
+    "purpose": "Ejecutar el paso de la tarea enviado a PowerShell.",
+    "method": "Usar PowerShell en el entorno aislado. El evento no identifica una finalidad más específica.",
+    "success": "El comando de PowerShell terminó sin errores."
+  },
+  "shell.cmd": {
+    "label": "Comando de Windows",
+    "progress": "Estoy ejecutando una operación mediante el intérprete de comandos de Windows.",
+    "purpose": "Ejecutar el paso de la tarea enviado al intérprete de Windows.",
+    "method": "Usar cmd.exe en el entorno aislado. El evento no identifica una finalidad más específica.",
+    "success": "El comando de Windows terminó sin errores."
+  },
+  "shell.list": {
+    "label": "Listado mediante shell",
+    "progress": "Estoy consultando un listado de archivos mediante un comando de shell.",
+    "purpose": "Localizar los archivos o carpetas que necesita esta operación.",
+    "method": "Ejecutar una orden de listado de archivos desde la shell del workspace.",
+    "success": "El comando de listado terminó sin errores."
+  },
+  "shell.read": {
+    "label": "Lectura mediante shell",
+    "progress": "Estoy consultando contenido de archivos mediante un comando de shell.",
+    "purpose": "Leer información de archivos para avanzar en la tarea.",
+    "method": "Ejecutar una orden de lectura desde la shell del workspace, sin mostrar el contenido leído en esta tarjeta.",
+    "success": "El comando de lectura terminó sin errores."
+  },
+  "shell.search": {
+    "label": "Búsqueda mediante shell",
+    "progress": "Estoy buscando coincidencias mediante una herramienta de búsqueda de la shell.",
+    "purpose": "Localizar coincidencias relevantes para la tarea.",
+    "method": "Ejecutar una herramienta de búsqueda como rg, grep o Select-String desde la shell.",
+    "success": "El comando de búsqueda terminó sin errores; esto no implica que haya encontrado coincidencias."
+  },
+  "shell.environment": {
+    "label": "Consultar herramientas disponibles",
+    "progress": "Estoy comprobando qué ejecutables están disponibles para realizar la tarea.",
+    "purpose": "Localizar las herramientas instaladas que necesita esta operación.",
+    "method": "Consultar la disponibilidad de ejecutables desde la shell del entorno aislado.",
+    "success": "La consulta de herramientas terminó sin errores."
+  },
+  "shell.posix": {
+    "label": "Comando de shell",
+    "progress": "Estoy ejecutando una operación de shell dentro del workspace.",
+    "purpose": "Ejecutar el paso de la tarea enviado a la shell.",
+    "method": "Usar la shell del entorno aislado. El evento no identifica una finalidad más específica.",
+    "success": "El comando terminó sin errores."
+  },
+  "command_execution": {
+    "label": "Comando del workspace",
+    "progress": "Estoy ejecutando un comando del proveedor dentro del workspace.",
+    "purpose": "Ejecutar una operación necesaria para la tarea.",
+    "method": "Usar el ejecutor del proveedor dentro del workspace aislado. No hay información suficiente para describir con precisión su finalidad.",
+    "success": "El ejecutor informó de que el comando terminó sin errores."
+  },
+  "web.search": {
+    "label": "Búsqueda web",
+    "progress": "Estoy realizando una búsqueda web para obtener fuentes que ayuden a resolver la consulta.",
+    "purpose": "Obtener fuentes web para la tarea.",
+    "method": "Consultar la herramienta de búsqueda web del proveedor.",
+    "success": "La operación de búsqueda terminó sin errores; sus fuentes deben evaluarse antes de usarlas."
+  },
+  "web.fetch": {
+    "label": "Consultar página web",
+    "progress": "Estoy consultando una página web para obtener información para la tarea.",
+    "purpose": "Obtener información de una página web.",
+    "method": "Usar la herramienta de consulta web del proveedor.",
+    "success": "La consulta web terminó sin errores."
+  },
+  "code.test": {
+    "label": "Ejecutar pruebas",
+    "progress": "Estoy ejecutando las comprobaciones de código solicitadas por el proveedor.",
+    "purpose": "Comprobar el comportamiento del código con la operación seleccionada.",
+    "method": "Ejecutar la herramienta de comprobación dentro del workspace.",
+    "success": "El ejecutor informó de que la comprobación terminó sin errores."
+  }
+}

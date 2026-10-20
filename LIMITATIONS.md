@@ -1,23 +1,47 @@
-# Actualización v0.7.2
-
-v0.7.2 añade contenido debug filtrado y una raíz de streaming; no captura procesos SDK invisibles. Véanse las limitaciones actuales, títulos anticipados, proyectos separados, modos y alcance temporal en [OBSERVABILITY-V072.md](OBSERVABILITY-V072.md).
-
-## Histórico v0.7.1
-
 # Límites y cobertura real
 
-- No se emiten llamadas deducidas de la intención del usuario, del texto de la respuesta ni de la extensión solicitada. `file.generated.*` acredita un archivo realmente recogido y validado por el flujo existente; no afirma qué comando lo creó.
-- Codex 0.161.0 expone command_execution, file_change, mcp_tool_call, web_search, todo_list y mensajes/razonamiento. Estos últimos no se registran como herramientas. No expone por separado cada lectura, escritura, mkdir o acceso web dentro de un proceso shell. Esos subpasos no se inventan.
-- Python/JavaScript solo se clasifican ante un ejecutable directo reconocido. Comandos compuestos, shell wrappers, redirecciones con separadores y comandos ambiguos conservan command_execution. No se presume code.test, web.download o workspace.read porque aparezca una palabra en un comando.
-- Los cambios Codex se clasifican por changes.kind; cambios mixtos quedan file_change. WebSearch/WebFetch, Read/Write/Edit, Glob/Grep se clasifican cuando el SDK Claude los comunica. Su registro no habilita herramientas que las políticas actuales de Claude mantienen deshabilitadas.
-- La duración de una operación SDK sin evento de inicio no es recuperable. Su span incluye missingStart=true; no se muestra una duración inventada. El instante de exportación no demuestra cuándo empezó la acción.
-- Los reintentos del ciclo de reparación de artefactos son conocidos y llevan attempt 1/2. Reintentos internos de red/modelo no expuestos por el SDK no se inventan. La generación model.codex/model.claude mide la ejecución del proveedor y agrega uso de sus turnos de reparación; no descompone submodelos internos.
-- Los eventos generados por el Bridge corresponden a preparación, snapshot/listado, recogida y validación realmente invocados. La instrumentación no añade ejecuciones de validación ni comandos al sandbox. El toolkit conserva su comportamiento previo si faltan utilidades opcionales; una llamada de validación no garantiza que exista cada validador externo.
-- Las observaciones de inicio existen en memoria; Langfuse recibe normalmente spans finalizados. Las tarjetas sí se actualizan en streaming. Un SIGKILL/crash de proceso puede impedir exportar spans no terminados; no se promete un cierre después de matar el proceso.
-- Límite de 1000 operaciones distintas por petición en el Bridge y 1000 tarjetas; no se repiten las terminaciones ya vistas. La exportación es asíncrona y de mejor esfuerzo, con colas acotadas; una caída prolongada puede descartar telemetría. No se reintenta una herramienta por un fallo de telemetría.
-- Solo se aceptan contextos remotos firmados con antigüedad máxima de 60 segundos, además de la autenticación normal. La identidad Roko conserva su verificación independiente de 10 minutos. MCP stdio, llamadas directas de otros hosts o conexiones sin contexto firmado producen trazas locales sin sesión de conversación; no se atribuyen a una conversación arbitraria.
-- Los clientes MCP HTTP actuales se conservan; no se exige modificar el protocolo MCP. Solo se agregan cabeceras HTTP por petición. No se habilita acceso a destinos nuevos, dominios externos, lectura o escritura adicional.
-- La telemetría HTTP/Undici automática general de Roko queda deshabilitada para impedir extracción de cabeceras de clientes arbitrarios y propagación indiscriminada. La correlación explícita autorizada de Bridge y MCP permanece. Otras instrumentaciones de backend se exportan con el mismo filtro privado.
-- Exportadores identificados: Langfuse directo del Bridge; procesador Langfuse de @librechat/agents 3.2.35 (LangChain callbacks, generaciones, títulos y ToolNode); SDK OTLP general de Roko; OTLP explícito de transport/langfuse_tracing.py. Feedback de Roko envía puntuaciones y metadatos de feedback, no documentos. Un exportador adicional instalado fuera de estos ZIP requiere una revisión adicional.
-- El parche de agents cubre CJS/ESM en instalación/build. No es una bifurcación antigua del SDK. Se verifica su versión y sus puntos de inserción; nuevas versiones requieren adaptar y probar el parche antes de desplegar.
-- No se han ejecutado inferencias reales con suscripciones, despliegues Docker, pipeline Bitbucket, pruebas con tu PostgreSQL de producción ni inspección de la UI Langfuse. Sí se compilan los paquetes y se prueban contratos y exportaciones locales. La prueba integral de Filestore usa SQLite y no certifica características específicas de PostgreSQL.
+## API y modelos
+
+El bridge adapta los runtimes CLI fijados por el proyecto, no toda la API de OpenAI o Anthropic. File Search y Code Interpreter alojados no están implementados. Las funciones externas deben exponerse desde Roko y ejecutarse allí.
+
+Los alias y esfuerzos configuran opciones, pero no garantizan disponibilidad ni calidad de un modelo para una cuenta concreta. El campo model de la generación Langfuse contiene actualmente el alias del bridge; no confirma el modelo backend resuelto por el SDK.
+
+La continuación Responses vive en memoria con TTL y propietario. No persiste tras reinicio. reasoning replay conserva el transporte compatible, pero no descifra estado interno ni retoma una sesión privada del modelo.
+
+## Streaming
+
+Solo se transmite prosa incremental cuando el SDK expone fragmentos compatibles y el sobre permite identificar una respuesta ordinaria. Un mensaje completo puede llegar como un solo bloque; no se fabrican tokens.
+
+Archivos, unsupported y funciones esperan revisión estructural. El texto ya emitido no puede retirarse: un fallo posterior termina con error, sin prometer éxito ni reescribirlo mediante reparación.
+
+Las tarjetas son presentación de operaciones observadas, no instrucciones ejecutables. Un cliente antiguo puede necesitar actualizar el parser para los campos y presupuestos del V1 ampliado.
+
+## Archivos y herramientas
+
+La extensión/MIME reconocida no implica lector, editor o validador completo. Los límites están en [SPEC.md](SPEC.md); Base64 también cuenta para el cuerpo HTTP.
+
+La validación puede ser checked, partial o unavailable según el toolkit. Que un archivo pase la comprobación estructural no garantiza exactitud de contenido, diseño, fórmulas o macros. La conversión Office puede perder funciones propietarias; XLSB no tiene escritor dedicado. Transcripción necesita pesos locales previamente instalados.
+
+Producir un EXE Windows requiere una herramienta adecuada para ese destino. Las instrucciones exigen comprobar la cadena de compilación y explicar las partes no disponibles; un binario Linux o un fuente no son un EXE Windows validado.
+
+Los workspaces son temporales. Roko debe conservar y volver a adjuntar la última versión para continuar una edición.
+
+## Aislamiento
+
+El sandbox comparte kernel y usuario de servicio con su entorno; no equivale a una VM dedicada. Docker declara SYS_ADMIN y excepciones seccomp/AppArmor para permitir namespaces anidados, sin privileged ni socket Docker.
+
+Kernel, rootless, políticas de VM y configuración Windows pueden impedir las restricciones requeridas. Los checks reales deben pasar en el host final; no hay fallback de shell sin aislamiento. No ejecutes varias instancias con el mismo directorio de login: el bloqueo de credenciales es interno al proceso.
+
+La limpieza y cierre de observaciones cubren el flujo normal de error/cancelación. Un crash o terminación forzada puede impedirlos.
+
+## Observabilidad
+
+Los SDK no muestran todas las operaciones internas de una shell ni cada reintento de red/modelo. No se inventan lecturas, escrituras, descargas ni tiempos a partir de palabras en un comando.
+
+Un tiempo observed mide el intervalo entre eventos recibidos, no la duración nativa garantizada. Un terminal sin inicio no permite reconstruir duración. Los reintentos de reparación conocidos sí se distinguen.
+
+El chat puede mostrar detalles técnicos reales de herramientas. El modo de privacidad de Langfuse no los oculta en la conversación. debug exporta texto saneado y acotado, pero no constituye anonimización general.
+
+La exportación es asíncrona, acotada y de mejor esfuerzo. Una caída puede perder telemetría; no provoca repetición de inferencia o herramientas. Proyectos Langfuse distintos no forman un árbol único y las trazas antiguas no cambian al modificar la política.
+
+Consulta [OBSERVABILITY.md](OBSERVABILITY.md) y los resultados y comprobaciones pendientes en [TESTS.md](TESTS.md).

@@ -1,14 +1,15 @@
+import { performance } from 'node:perf_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { classifyOperation, OPERATION_LABELS } from './operations.mjs';
+import { activityContext, activityDescription } from './activity-context.mjs';
 const SAFE = Symbol('safeActivity');
 const MAX_ACTIVITY = 1000;
-// Public SDK text is still untrusted: a redactor cannot distinguish a quoted
-// document from a progress update. Accept only complete operational sentences.
+// Public progress is chat content. Export privacy is applied only by Langfuse.
 export function safeProgressText(value) {
-  if (typeof value !== 'string' || value.length > 240) return null;
-  const text = value.replaceAll('[[ROKO_BRIDGE_TOOL_V1:', '[reserved:')
-    .replaceAll('\u001eLIBRECHAT_OUTPUT_V1\u001e', '[reserved]').trim();
-  return /^(?:Voy a (?:revisar|leer|validar|comprobar) (?:los documentos|los archivos|el resultado)|Estoy (?:revisando los documentos|leyendo los archivos|validando el resultado|preparando la respuesta)|He localizado los archivos; estoy validando el resultado|I (?:will review the documents|am reviewing the documents|am validating the result|am preparing the response))\.?$/.test(text) ? text : null;
+  if (typeof value !== 'string' || !value.trim() || /^\s*[\[{]/.test(value)) return null;
+  return value.replaceAll('[[ROKO_BRIDGE_TOOL_V1:', '[reserved:')
+    .replaceAll('\u001eLIBRECHAT_OUTPUT_V1\u001e', '[reserved]')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').trim().slice(0, 4000);
 }
 const PROGRESS_LABELS = Object.freeze({
   'workspace.list':'Estoy localizando los archivos.',
@@ -37,8 +38,10 @@ const PROGRESS_LABELS = Object.freeze({
 export function operationProgress(value) {
   const event = safeActivity(value);
   if (!event || event.state !== 'started') return null;
-  const text = PROGRESS_LABELS[event.operation] ?? 'Estoy ejecutando una herramienta.';
-  return `${event.attempt > 1 ? `Intento ${Math.min(99,event.attempt)}: ` : ''}${text}\n`;
+  const description = activityDescription(event.detailCode);
+  const text = description?.progress ?? PROGRESS_LABELS[event.operation] ?? 'Estoy ejecutando una herramienta.';
+  const count = event.fileCount === undefined ? '' : ` Archivos en esta operación: ${event.fileCount}.`;
+  return `${event.attempt > 1 ? `Intento ${Math.min(99,event.attempt)}: ` : ''}${text}${count}\n`;
 }
 export function createProgressReporter(send, {max=100, signal}={}) {
   const seen = new Set();
@@ -61,10 +64,15 @@ export function safeActivity(value) {
   const id = createHash('sha256').update(`${value.provider}:${value.type}:${String(value.id ?? value.type)}:${value.attempt ?? 1}`).digest('base64url').slice(0,24);
   const result = {provider:value.provider, type:value.type, state:value.state,
     label:OPERATION_LABELS[operation] ?? operation, id, operation};
+  const detailCode = activityContext(value, operation);
+  if (detailCode) result.detailCode = detailCode;
+  if (Number.isSafeInteger(value.fileCount) && value.fileCount >= 0 && value.fileCount <= 1000) result.fileCount = value.fileCount;
   for (const key of ['durationMs','attempt','exitCode','startedAt','endedAt']) {
     if (Number.isFinite(value[key]) && Math.abs(value[key]) < Number.MAX_SAFE_INTEGER) result[key] = value[key];
   }
   if (/^[a-z_]{1,50}$/.test(value.errorCategory ?? '')) result.errorCategory = value.errorCategory;
+  if (operation === 'workspace.validate' && ['checked','partial','unavailable'].includes(value.validationStatus)) result.validationStatus = value.validationStatus;
+  if (['execution','provider','observed'].includes(value.timingSource)) result.timingSource = value.timingSource;
   const input=value.item ?? value.input ?? {};
   const affected=value.filename ?? input.file_path ?? (input.changes?.length===1 ? input.changes[0].path : undefined);
   const extension=typeof affected==='string' ? affected.replace(/\\/g,'/').split('/').pop().match(/\.[a-zA-Z0-9]{1,12}$/)?.[0].toLowerCase():undefined;
@@ -92,11 +100,18 @@ export function createActivityReporter(send, {max=MAX_ACTIVITY}={}) {
     if (!event) return;
     const previous = states.get(event.id);
     if ((!previous && states.size >= max) || previous?.state === event.state || (previous && previous.state !== 'started')) return;
-    const now=Date.now();
+    const now=Date.now(), monotonicNow=performance.now();
     const startedAt=previous?.startedAt ?? event.startedAt ?? (event.state==='started' ? now : undefined);
-    states.set(event.id,{state:event.state,startedAt});
-    const timed={...event,...(startedAt===undefined?{}:{startedAt}),
-      ...(event.state==='started'?{}:{endedAt:now,...(startedAt===undefined?{}:{durationMs:Math.max(0,now-startedAt)})})};
+    const details = {
+      ...(previous?.details ?? {}),
+      ...Object.fromEntries(['detailCode','fileCount','filename','extension','bytes','validationStatus'].filter(key => event[key] !== undefined).map(key => [key,event[key]])),
+    };
+    const monotonicStart=previous?.monotonicStart ?? (event.state==='started' ? monotonicNow : undefined);
+    states.set(event.id,{state:event.state,startedAt,details,monotonicStart});
+    const supplied=Number.isFinite(event.durationMs) && event.durationMs>=0 ? event.durationMs : undefined;
+    const elapsed=supplied ?? (monotonicStart===undefined ? undefined : Math.max(0,monotonicNow-monotonicStart));
+    const timed={...event,...details,...(startedAt===undefined?{}:{startedAt}),
+      ...(event.state==='started'?{}:{endedAt:event.endedAt ?? now,...(elapsed===undefined?{}:{durationMs:elapsed,timingSource:supplied===undefined?'observed':event.timingSource ?? 'provider'})})};
     Object.defineProperty(timed, SAFE, {value:true});
     try {send(timed);} catch { /* Activity cannot break inference. */ }
   };
@@ -108,16 +123,19 @@ export function activityCardRecord(value) {
   return `[[ROKO_BRIDGE_TOOL_V1:${Buffer.from(JSON.stringify({v:1,...data})).toString('base64url')}]]\n`;
 }
 export async function activityOperation(request, type, metadata, execute) {
-  const id = randomUUID(), startedAt = Date.now();
+  const id = randomUUID(), startedAt = Date.now(), monotonicStart = performance.now();
   const base = {provider:'bridge',type,id,...metadata,startedAt};
   const send = event => {try { request.onBridgeActivity?.(event); } catch { /* Best effort. */ }};
   send({...base,state:'started'});
   try {
     const result = await execute();
-    send({...base,state:'completed',endedAt:Date.now(),durationMs:Date.now()-startedAt});
+    const fileCount = type === 'workspace.list' && result instanceof Map ? result.size
+      : type === 'file.download' && Array.isArray(result) ? result.length : metadata.fileCount;
+    const validationStatus = type === 'workspace.validate' ? result?.validationStatus : undefined;
+    send({...base,fileCount,validationStatus,state:'completed',endedAt:Date.now(),durationMs:Math.max(0,performance.now()-monotonicStart),timingSource:'execution'});
     return result;
   } catch (error) {
-    send({...base,state:request.signal?.aborted ? 'cancelled':'failed',endedAt:Date.now(),durationMs:Date.now()-startedAt,
+    send({...base,state:request.signal?.aborted ? 'cancelled':'failed',endedAt:Date.now(),durationMs:Math.max(0,performance.now()-monotonicStart),timingSource:'execution',
       errorCategory:request.signal?.aborted ? 'cancelled':'operation_failed'});
     throw error;
   }

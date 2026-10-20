@@ -10,7 +10,7 @@ const execute = promisify(execFile);
 
 /** Runs only the administrator-provisioned reader, never an uploaded script. */
 export async function runFileTool(operation, path, cwd, { signal, python = runtimePython(), env = process.env } = {}) {
-  if (!existsSync(python)) return { warnings: ['File toolkit is not installed: run npm run setup:files or build the supplied Docker image.'] };
+  if (!existsSync(python)) return { available: false, warnings: ['File toolkit is not installed: run npm run setup:files or build the supplied Docker image.'] };
   const args = [resolve(BRIDGE_ROOT, 'scripts/file-tools.py'), operation, '--workspace', cwd, '--path', relative(cwd, path)];
   const home = resolve(cwd, '.bridge-prepared', 'tool-home');
   const temp = resolve(home, 'tmp');
@@ -31,6 +31,14 @@ export async function runFileTool(operation, path, cwd, { signal, python = runti
   return JSON.parse(output.stdout);
 }
 
+/** @typedef {{validationStatus: 'checked'|'partial'|'unavailable'}} FileValidationSummary */
+/** @returns {Promise<FileValidationSummary>} */
 export async function validateFinishedFiles(files, cwd, options) {
-  for (const file of files) await runFileTool('validate', resolve(cwd, file.path), cwd, options);
+  let checked = 0, skipped = 0;
+  for (const file of files) {
+    const result = await runFileTool('validate', resolve(cwd, file.path), cwd, options);
+    if (result.available === false) skipped++;
+    else checked++;
+  }
+  return {validationStatus: skipped === 0 ? 'checked' : checked === 0 ? 'unavailable' : 'partial'};
 }

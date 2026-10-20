@@ -1,4 +1,5 @@
 import { activityOperation } from './activity.mjs';
+import { createAnswerStream } from './answer-stream.mjs';
 import { runClaude } from './claude-workspace.mjs';
 import { workspaceInstructions } from './workspace-instructions.mjs';
 import { mkdir } from 'node:fs/promises';
@@ -18,7 +19,7 @@ export async function* runProvider(request, signal) {
   try {
     runtime = await createIsolatedRuntime(request);
     const { cwd, env } = runtime;
-    request = request.attachments?.length ? await activityOperation(request, 'file.upload', {}, () => stageAttachments(request, cwd, { signal, env })) : await stageAttachments(request,cwd,{signal,env});
+    request = request.attachments?.length ? await activityOperation(request, 'file.upload', {fileCount:request.attachments.length}, () => stageAttachments(request, cwd, { signal, env })) : await stageAttachments(request,cwd,{signal,env});
     const before = await activityOperation(request, 'workspace.list', {}, () => snapshotWorkspace(cwd));
     if (request.cliOptions.provider === 'claude') {
       yield* runClaude(request, signal, cwd, before, env);
@@ -56,6 +57,7 @@ export async function* runCodex(request, signal, cwd, before, env, dependencies 
     ...(request.visionImages ?? []).map(item => ({ type: 'local_image', path: item.path })),
   ];
   const diagnostics = [];
+  const answer = createAnswerStream(request, signal);
   let commands = 0;
   const onDiagnostic = (diagnostic, item) => {
     diagnostics.push(diagnostic);
@@ -68,12 +70,15 @@ export async function* runCodex(request, signal, cwd, before, env, dependencies 
   const completed = await completeArtifactRun(async repair => {
     const { events } = await thread.runStreamed(repair ?? (request.attachments.length ? input : request.prompt), { signal, outputSchema: artifactOutputSchema(request) });
     const result = [];
-    // Only the final answer from a successful, validated turn reaches LibreChat.
+    // Control metadata and files stay buffered. The answer-text callback can
+    // publish eligible prose while this turn is still running.
     for await (const event of readCodexEvents(events, { signal, toolRelay: true, includeReasoning: request.cliOptions.reasoning_summary !== 'none',
       onProgress: value => request.onProviderProgress?.({...value,attempt:repair ? 2:1}),
+      onMessageSnapshot: (id, text) => { if (!repair) answer.snapshot(id, text); },
       onDiagnostic, onItemCompleted: item => { if (item?.type === 'command_execution') commands++; }, onActivity: value => request.onBridgeActivity?.({...value, attempt:repair ? 2:1}) })) result.push(event);
     return result;
-  }, cwd, before, { onActivity:request.onBridgeActivity, signal, validateFiles: dependencies.validateFiles ?? (files => validateFinishedFiles(files, cwd, { signal, env })), getDiagnostics: () => diagnostics, prepareResult: events => {
+  }, cwd, before, { onActivity:request.onBridgeActivity, signal, canRepair:()=>!answer.emitted, validateFiles: dependencies.validateFiles ?? (files => validateFinishedFiles(files, cwd, { signal, env })), getDiagnostics: () => diagnostics, prepareResult: events => {
+    if (answer.emitted) answer.check(JSON.parse(events.filter(e=>typeof e.text==='string').map(e=>e.text).join('')));
     const prepared = prepareArtifactResult(events, request);
     if (prepared.manifest.status === 'unsupported') console.error('[bridge codex unsupported]', JSON.stringify({commands, failures: diagnostics.length, sandbox: 'workspace-write', ...(process.platform === 'win32' ? {windowsSandbox: codexHostConfig().windows.sandbox} : {})}));
     return prepared;

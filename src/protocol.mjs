@@ -180,7 +180,7 @@ export function validateRequest(body) {
   if (toolChoice === 'required' && tools.length === 0) throw new BridgeError(400, 'tool_choice=required needs at least one function tool.');
   const { messages, attachments } = normalizeChatMessages(body.messages);
   let system = messages.filter(m => ['system', 'developer'].includes(m.role)).map(m => m.content).join('\n\n');
-  if (webSearch) system = [system, 'Live web search is available for this request. Search when it helps answer, and include source URLs in the answer.'].filter(Boolean).join('\n\n');
+
   const history = messages.filter(m => !['system', 'developer'].includes(m.role));
   const base = { model: body.model, stream: body.stream === true, system, prompt: transcriptPrompt(history), attachments, webSearch };
   const relay = toolDecisionPrompt(base.prompt, tools, toolChoice, system);
@@ -261,7 +261,7 @@ export function validateResponsesRequest(body, previous = null) {
   const toolChoice = parseToolChoice(body.tool_choice, tools);
   if (toolChoice === 'required' && tools.length === 0) throw new BridgeError(400, 'tool_choice=required needs at least one function tool.');
   let system = [...(previous?.system ? [previous.system] : []), ...systemParts].join('\n\n');
-  if (webSearch) system = [system, 'Live web search is available for this request. Search when it helps answer, and include source URLs in the answer.'].filter(Boolean).join('\n\n');
+
   const prompt = transcriptPrompt(conversation);
   const base = { model: body.model, stream: body.stream === true, system, prompt, tools, toolChoice, attachments, webSearch };
   const relay = toolDecisionPrompt(prompt, tools, toolChoice, system);

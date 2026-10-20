@@ -48,13 +48,18 @@ test('identity is backend signed, binds model/time and hashes tenant/user/conver
 test('preset values and edited UI parameters reach native options without global mutation', () => {
   const env = { CODEX_MODEL: 'test-model', CLAUDE_MODEL: 'sonnet' };
   const deep = resolveCliOptions('gpt-codex-deep', {}, {}, env);
-  const edited = resolveCliOptions('gpt-codex-deep', { reasoning: { effort: 'low' } }, { reasoning_effort: 'medium' }, env);
+  const edited = resolveCliOptions('gpt-codex-deep', { reasoning: { effort: 'low' } }, { reasoning_effort: 'high' }, env);
   assert.equal(deep.reasoning_effort, 'high');
+  assert.equal(codexThreadOptions({ cliOptions: deep }, '/workspace').modelReasoningEffort, 'high');
+  assert.equal(resolveCliOptions('gpt-codex', {}, {}, env).reasoning_effort, 'medium');
+  assert.equal(resolveCliOptions('gpt-codex-fast', {}, {}, env).reasoning_effort, 'low');
+  assert.equal(resolveCliOptions('gpt-codex-deep', {}, { reasoning_effort: 'high' }, env).reasoning_effort, 'high');
   assert.equal(edited.reasoning_effort, 'low');
   assert.equal(resolveCliOptions('gpt-codex-deep', { reasoning_effort: '' }, {}, env).reasoning_effort, 'high');
   assert.equal(codexThreadOptions({ cliOptions: edited, webSearch: false }, '/workspace').modelReasoningEffort, 'low');
   assert.equal(codexThreadOptions({ cliOptions: edited, webSearch: false }, '/workspace').model, 'test-model');
   assert.deepEqual(claudeModelOptions(resolveCliOptions('claude-max-deep', {}, {}, env)), { model: 'opus', effort: 'high', persistSession: false });
+  assert.deepEqual(claudeModelOptions(resolveCliOptions('claude-max-fast', {}, {}, env)), { model: 'haiku', effort: 'low', persistSession: false });
   assert.deepEqual(env, { CODEX_MODEL: 'test-model', CLAUDE_MODEL: 'sonnet' });
   for (const value of [{ sandbox: 'danger-full-access' }, { args: [] }, { model: 'unapproved' }]) {
     assert.throws(() => resolveCliOptions('gpt-codex', { cli_options: value }, {}, env));

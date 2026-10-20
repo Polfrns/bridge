@@ -1,40 +1,41 @@
-# v0.7.3 — Responses reasoning replay
+# Historial del Bridge
 
-El normalizador acepta los elementos reasoning que el propio Bridge emite y que Roko devuelve al continuar tras una herramienta MCP. Se omiten del transcript del proveedor CLI: no son instrucciones, resultados MCP ni llamadas ejecutables. El historial humano/asistente y function_call/function_call_output se conservan. Sin cambios de dependencias, permisos, exportación ni pipeline.
+La versión declarada sigue siendo 0.7.3. Los cambios del árbol de trabajo posteriores a esa entrega se describen como pendientes; esta revisión documental no publica una versión.
 
-# v0.7.2 — 2026-10-16
+## Sin publicar — estado actual del repositorio
 
-Entrada y salida textual acotada en observaciones existentes, según modo redacted/debug. El contexto remoto firmado conserva nombre de la traza raíz. Filtro de secretos/binarios también en debug; nuevas pruebas HTTP con SDK/OTLP reales. Versión de servicio 0.7.2, dependencias sin cambios.
+- Texto ordinario en directo desde eventos compatibles de Claude y Codex hacia Chat Completions y Responses, sin revisión semántica adicional ni repetición final.
+- Entregas de archivos y decisiones de función retenidas hasta validar; reparación de archivos conservada y error explícito si falla una respuesta textual ya publicada.
+- Actividad pública durante generación y reparación, con resúmenes por operación, detalles técnicos acotados en el chat y política de exportación independiente.
+- Duraciones con procedencia execution/provider/observed; sin tiempos inventados para eventos terminales aislados.
+- Capacidades por proveedor en models y banderas reasoningReplay/publicProgress/liveText/cliOptions en health.
+- Presets Codex normal/deep con esfuerzo medium/high; Claude Fast usa Haiku. El ejemplo configura Sonnet/Haiku/Opus y Luna/Luna/Sol mediante variables de modelo.
+- Validación estricta de opciones/objetos JSON y búsqueda derivada de la opción efectiva, sin conservar instrucciones obsoletas.
+- Timeout predeterminado de diez minutos, código request_timeout y HTTP 504 antes de iniciar la respuesta.
+- Validación de archivos con estado checked/partial/unavailable y explicaciones de entregas parciales o herramientas ausentes.
+- Correcciones de regresiones: esperas de validación por registros V1 decodificados y localización del único terminal de un span aunque haya actualizaciones previas de contenido.
+- Documentación consolidada: observabilidad en OBSERVABILITY.md, CI y despliegue en DEPLOY.md y resultados en TESTS.md. Se retiran las notas transitorias de ZIP/hotfix y los informes duplicados.
 
-Entrega basada únicamente en los ZIP actuales del 16/10. Véase OBSERVABILITY-V072.md.
+Última suite completa registrada: 210 pruebas Node y 9 Python aprobadas en la etapa Docker ci. Alcance y límites en [TESTS.md](TESTS.md).
 
-## Histórico anterior
+## 0.7.3 — Responses reasoning replay
 
-# Observabilidad v0.7.1 — 2026-10-15
+Se aceptan los elementos reasoning devueltos por Roko al continuar tras una herramienta. Se omiten del transcript CLI, sin descifrar encrypted_content ni convertirlos en instrucciones. Se conservan historial, function_call y function_call_output con sus IDs.
 
-## Bridge
-- Base exclusiva del adjunto bridge(1).zip; versión previa 0.7.0.
-- Clasificación por datos reales de Codex SDK 0.161.0 y Claude Agent SDK 0.3.291: intérpretes directos, cambios de archivo, web, MCP y herramientas de lectura/escritura.
-- Nombres específicos en spans y marcadores V1 ampliados con duración, cancelación, intento, extensión, estado, salida numérica y categorías de error disponibles.
-- Una observación por llamada/intento; terminales duplicados y regresiones ignorados. Cierre de actividad pendiente también con tracing deshabilitado.
-- Instrumentación de preparación de adjuntos, listado del workspace, recogida y validación reales; eventos de archivo generado solo después de validación. Nada se deriva de la petición textual.
-- Streaming de actividad por Chat Completions y Responses, antes de terminar inferencia. Nunca se transforma actividad interna en tool_calls ejecutables.
-- Sesiones estables con HMAC, nuevas trazas por petición, contexto remoto firmado y acotado. Mantiene las claves de aislamiento originales.
-- Exportación con proyección privada previa al procesador Langfuse y a media uploads. Dependencias de observabilidad fijadas en package-lock, incluyendo instalación local.
+Corrige el error 422 al continuar un ciclo de herramientas. No ejecuta de nuevo la función ni cambia permisos, dependencias o pipeline. Las antiguas instrucciones de aplicar un ZIP de hotfix quedan sustituidas por las guías actuales.
 
-## Roko
-- Base exclusiva Roko(3).zip; LibreChat v0.8.6, @librechat/api 1.7.31, @librechat/agents 3.2.35, Langfuse 5.3.0.
-- Consumidor V1 retrocompatible: nombres traducidos, duración, reintentos, cancelación y basenames opcionales. Mantiene el componente ToolCall de las tarjetas originales; son solo presentación.
-- Sesiones seudonimizadas en el exportador real de agents, conservando conversationId y thread_id de LibreChat.
-- Propagación dinámica por petición hacia Bridge y MCP, con HMAC y lista explícita de destinos. No almacena contexto de trazado en conexiones MCP compartidas.
-- Protección del exportador nativo LangChain/Langfuse CJS y ESM, y del exportador OTLP general. Modelos y documentos reales permanecen intactos.
-- Parche de instalación idempotente, verificado contra agents 3.2.35; fallo de build si cambia esa versión. Dockerfile y Dockerfile.multi aplican el parche.
-- Lockfile corregido para el workspace adjunto packages/roko-server; no se sustituye por una versión antigua. No modifica la versión funcional de LibreChat.
+## 0.7.2 — 2026-10-16
 
-## Filestore
-- Base exclusiva server(2).zip; Django 6.1.1, MCP 2.2.0, OpenTelemetry 1.45.0.
-- Mantiene las 12 funciones MCP y sus firmas, autenticación y reglas de acceso. Spans mcp.<nombre_real>, estado, duración, categoría de error y extensión segura.
-- Contexto W3C aceptado únicamente tras autenticar y verificar HMAC de servicio vigente. ContextVars restauradas al terminar.
-- El exportador OTLP elimina atributos no autorizados, eventos y texto de errores. No exporta argumentos ni resultados documentales.
-- Cierre ante cancelaciones y excepciones, tracing fail-open sin repetir herramientas.
-- Conserva Bitbucket main, runner self-hosted, /opt/test.sh y /opt/deploy.sh. Compose conserva image/build en todos los servicios.
+Contenido textual acotado según redacted/debug, saneamiento de secretos y binarios y conservación del nombre de la traza remota firmada. Pruebas HTTP y exportación con SDK Langfuse real y colectores OTLP locales.
+
+## 0.7.1 — 2026-10-15
+
+Clasificación de operaciones reales, estados V1, intentos, sesiones HMAC, contexto de trazado firmado y exportación privada. Instrumentación de preparación, recogida y validación sin fabricar operaciones a partir de la intención del usuario.
+
+## 0.7.0
+
+Integración inicial de Langfuse/OpenTelemetry y actividad visible en LibreChat, preservando relay de funciones, devolución de archivos y aislamiento.
+
+Este historial cubre Bridge. Las versiones y pruebas de Roko/Filestore pertenecen a sus propios repositorios.
+
+MODIFIED-FILES.json conserva el manifiesto histórico del paquete hotfix 0.7.3, incluidas las notas de entrega que ahora se han integrado en estas guías. No es un inventario del árbol actual ni una lista para preparar el próximo commit.
