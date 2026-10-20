@@ -28,8 +28,8 @@ def validate(data: object, app: str, commit: str, build: str) -> dict:
         raise ValueError('Artifact does not belong to this service, commit and pipeline build')
     if not re.fullmatch(SHA, str(data.get('image_id', ''))):
         raise ValueError('Invalid image configuration ID')
-    if data.get('source') != 'bitbucket-cloud' or not re.fullmatch(re.escape(repository()) + '@' + SHA, str(data.get('image', ''))):
-        raise ValueError('Deployment requires a cloud-tested image pinned by digest in the configured registry')
+    if data.get('source') != 'verified-ci' or not re.fullmatch(re.escape(repository()) + '@' + SHA, str(data.get('image', ''))):
+        raise ValueError('Deployment requires a CI-tested image pinned by digest in the configured registry')
     return data
 
 
@@ -39,10 +39,10 @@ def normalized_repository(value: str) -> str:
 
 def main() -> None:
     action, app = sys.argv[1:3]
-    commit = os.environ['BITBUCKET_COMMIT']
-    build = os.environ['BITBUCKET_BUILD_NUMBER']
+    commit = os.environ['CI_COMMIT_SHA']
+    build = os.environ['CI_BUILD_NUMBER']
     if app not in ('roko', 'bridge') or not re.fullmatch(r'[a-f0-9]{40}', commit) or not re.fullmatch(r'[1-9][0-9]{0,11}', build):
-        raise ValueError('Invalid service or Bitbucket identifiers')
+        raise ValueError('Invalid service or CI identifiers')
     if action == 'repository':
         print(repository())
     elif action == 'read':
@@ -61,7 +61,7 @@ def main() -> None:
         }
         if len(candidates) != 1:
             raise ValueError('The published image does not have one unambiguous digest in the configured repository')
-        data = {'source': 'bitbucket-cloud', 'app': app, 'commit': commit, 'build': int(build),
+        data = {'source': 'verified-ci', 'app': app, 'commit': commit, 'build': int(build),
                 'image': repo + '@' + candidates.pop(), 'image_id': sys.argv[3]}
         print(json.dumps(validate(data, app, commit, build)))
     else:

@@ -14,25 +14,25 @@ if [[ "$action" == rollback ]]; then
   [[ -n "$current" && -L "$state_dir/previous" ]] || { echo 'No previous release is available.' >&2; exit 1; }
   target=$(readlink -f "$state_dir/previous")
 elif [[ "$action" == deploy ]]; then
-  [[ "${BITBUCKET_BRANCH:-}" == main ]] || { echo 'Only main may deploy automatically.' >&2; exit 1; }
-  : "${BITBUCKET_COMMIT:?Missing commit}" "${BITBUCKET_BUILD_NUMBER:?Missing build number}"
-  [[ "$(git rev-parse HEAD)" == "$BITBUCKET_COMMIT" ]] || exit 1
+  [[ "${CI_BRANCH:-}" == main ]] || { echo 'Only main may deploy automatically.' >&2; exit 1; }
+  : "${CI_COMMIT_SHA:?Missing commit}" "${CI_BUILD_NUMBER:?Missing build number}"
+  [[ "$(git rev-parse HEAD)" == "$CI_COMMIT_SHA" ]] || exit 1
   manifest=$(python3 "$script_dir/registry-manifest.py" read "$app")
   mapfile -t fields <<< "$manifest"
   image=${fields[0]}; image_id=${fields[1]}
   if [[ -n "$current" ]]; then
     last_build=$(cat "$current/build_number")
     [[ "$last_build" =~ ^[0-9]{1,12}$ ]] || exit 1
-    if ((10#$BITBUCKET_BUILD_NUMBER <= 10#$last_build)); then
+    if ((10#$CI_BUILD_NUMBER <= 10#$last_build)); then
       echo 'This pipeline has already deployed or has been superseded; skipping.'
       exit 0
     fi
     project=$(cat "$current/project")
   fi
-  # This step runs only after cloud tests/build/publish succeed. Never rebuild.
+  # This step runs only after CI tests/build/publish succeed. Never rebuild.
   docker pull --platform linux/amd64 "$image"
   [[ "$(docker image inspect --format '{{.Id}}' "$image")" == "$image_id" ]] || { echo 'Pulled image does not match the tested image configuration.' >&2; exit 1; }
-  [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" == "$BITBUCKET_COMMIT" ]] || exit 1
+  [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" == "$CI_COMMIT_SHA" ]] || exit 1
   [[ "$(docker image inspect --format '{{index .Config.Labels "io.roko.ci.service"}}' "$image")" == "$app" ]] || exit 1
   if [[ -z "$current" ]]; then
     args=(compose --project-directory "$deploy_dir" --env-file "$deploy_dir/.env")
@@ -42,25 +42,25 @@ elif [[ "$action" == deploy ]]; then
     project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid")
     old_image=$(docker inspect --format '{{.Image}}' "$cid")
     [[ "$old_image" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
-    current="$state_dir/releases/bootstrap-${BITBUCKET_BUILD_NUMBER}"
+    current="$state_dir/releases/bootstrap-${CI_BUILD_NUMBER}"
     mkdir "$current"
     for file in "${config_files[@]}"; do cp "$deploy_dir/$file" "$current/$file"; done
     printf '%s\n' "$project" > "$current/project"
     printf '0\n' > "$current/build_number"
-    backup_image="local/${app}-rollback:bootstrap-${BITBUCKET_BUILD_NUMBER}"
+    backup_image="local/${app}-rollback:bootstrap-${CI_BUILD_NUMBER}"
     docker tag "$old_image" "$backup_image"
     write_override "$current" "$backup_image" "$old_image"
     compose_release "$current" config -q
     link_release current "$current"
   fi
   [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || exit 1
-  target="$state_dir/releases/${BITBUCKET_COMMIT}-${BITBUCKET_BUILD_NUMBER}"
+  target="$state_dir/releases/${CI_COMMIT_SHA}-${CI_BUILD_NUMBER}"
   mkdir -p "$target"
   # Only deployment definitions are copied. Application source is in the tested image.
   for file in "${config_files[@]}"; do cp "$file" "$target/$file"; done
   printf '%s\n' "$project" > "$target/project"
-  printf '%s\n' "$BITBUCKET_BUILD_NUMBER" > "$target/build_number"
-  printf '%s\n' "$BITBUCKET_COMMIT" > "$target/commit"
+  printf '%s\n' "$CI_BUILD_NUMBER" > "$target/build_number"
+  printf '%s\n' "$CI_COMMIT_SHA" > "$target/commit"
   write_override "$target" "$image" "$image_id"
 else
   echo 'Unknown action.' >&2; exit 2

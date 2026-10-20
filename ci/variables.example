@@ -1,10 +1,11 @@
-# Configurar en Bitbucket; no copiar sobre el .env de la aplicación.
-# Repository variables (sustituir tu-workspace por tu slug real):
+# Variables del proveedor de CI; no copiar sobre el .env de la aplicación.
+CI_COMMIT_SHA=0000000000000000000000000000000000000000
+CI_BUILD_NUMBER=1
+CI_BRANCH=main
 CI_IMAGE_REPOSITORY=crg.apkg.io/tu-workspace/bridge
-# Deployment production:
 BRIDGE_DEPLOY_DIR=/home/rokoface/services/bridge
-# Solo para registros sin autenticación nativa, en deployment image-publish:
+# Credenciales del registro (no guardar tokens reales en el repositorio).
 # CI_REGISTRY_PUSH_USER=usuario-publicador
-# CI_REGISTRY_PUSH_TOKEN=TOKEN_SEGURO_CONFIGURADO_EN_BITBUCKET
+# CI_REGISTRY_PUSH_TOKEN=TOKEN_SEGURO
 # Opcional, Roko:
 # CI_NODE_MAX_OLD_SPACE_SIZE=4096
