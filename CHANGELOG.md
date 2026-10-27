@@ -4,6 +4,8 @@ La versión declarada sigue siendo 0.7.3. Los cambios del árbol de trabajo post
 
 ## Sin publicar — estado actual del repositorio
 
+- Búsqueda web nativa para Claude: con web_search activo recibe WebSearch y WebFetch, y las capacidades publicadas lo anuncian. Un hook limita WebFetch a destinos http(s) públicos para que el contenedor no sirva de acceso a Roko ni a la LAN. Roko deja de depender de Codex para buscar.
+
 - Texto ordinario en directo desde eventos compatibles de Claude y Codex hacia Chat Completions y Responses, sin revisión semántica adicional ni repetición final.
 - Entregas de archivos y decisiones de función retenidas hasta validar; reparación de archivos conservada y error explícito si falla una respuesta textual ya publicada.
 - Actividad pública durante generación y reparación, con resúmenes por operación, detalles técnicos acotados en el chat y política de exportación independiente.

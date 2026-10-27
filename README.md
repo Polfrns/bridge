@@ -35,7 +35,7 @@ El texto ordinario se envía según llegan fragmentos compatibles del SDK, sin u
 
 Las tarjetas muestran operaciones reales y comentarios públicos mientras se ejecuta el proveedor. Pueden incluir comandos, argumentos seleccionados y salida textual en la conversación autenticada. La política de exportación a Langfuse es independiente; no se muestra pensamiento privado. Véase [OBSERVABILITY.md](OBSERVABILITY.md).
 
-Roko ejecuta las funciones externas que el modelo pide mediante el relay, incluidas las herramientas MCP configuradas allí. El bridge no ejecuta esas funciones. Claude dispone además de una herramienta interna `mcp__workspace__execute` y lectura/edición restringidas al workspace; Codex utiliza sus herramientas nativas. La búsqueda web nativa está disponible para Codex cuando se activa.
+Roko ejecuta las funciones externas que el modelo pide mediante el relay, incluidas las herramientas MCP configuradas allí. El bridge no ejecuta esas funciones. Claude dispone además de una herramienta interna `mcp__workspace__execute` y lectura/edición restringidas al workspace; Codex utiliza sus herramientas nativas. La búsqueda web nativa está disponible para ambos proveedores cuando se activa: Codex usa su búsqueda en vivo y Claude recibe WebSearch y WebFetch; WebFetch solo alcanza direcciones http(s) públicas.
 
 ## Archivos
 

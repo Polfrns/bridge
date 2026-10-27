@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { runClaude, EXEC_TOOL, claudeWorkspaceServer } from '../src/claude-workspace.mjs';
+import { runClaude, EXEC_TOOL, WEB_TOOLS, publicWebUrl, claudeWorkspaceServer } from '../src/claude-workspace.mjs';
 import { snapshotWorkspace } from '../src/output-files.mjs';
 import { validateFinishedFiles } from '../src/file-toolkit.mjs';
 
@@ -148,4 +148,30 @@ test('scripted Claude executes a real Python DOCX edit and repairs corrupt outpu
   const output=events.at(-1).files[0];assert.equal(output.filename,'result.docx');assert.equal(Buffer.from(output.data,'base64').subarray(0,2).toString(),'PK');
   const result=await promisify(execFile)(python,['-c',"from docx import Document; d=Document('outputs/result.docx'); assert str(d.paragraphs[0].runs[0].font.color.rgb)=='FF0000';print(d.paragraphs[0].text)"],{cwd});
   assert.match(result.stdout,/Edited by Claude workflow/);assert.equal((await readFile(join(cwd,'outputs/result.docx'))).length,output.bytes);
+});
+
+test('Claude gets native web tools only when web search is enabled',async t=>{
+  const {cwd,before}=await workspace(t);
+  const off=scriptedSdk(async()=>({structured_output:envelope('Hola')}));await run(cwd,before,off);
+  assert.deepEqual(off.calls[0].options.tools,['Read','Write','Edit']);
+  assert.equal((await off.calls[0].options.canUseTool('WebSearch',{query:'news'})).behavior,'deny');
+  const on=scriptedSdk(async()=>({structured_output:envelope('Hola')}));await run(cwd,before,on,{},{...request,webSearch:true});
+  const options=on.calls[0].options;
+  assert.deepEqual(options.tools,['Read','Write','Edit',...WEB_TOOLS]);
+  assert.equal((await options.canUseTool('WebSearch',{query:'news'})).behavior,'allow');
+  assert.equal((await options.canUseTool('WebFetch',{url:'http://127.0.0.1:3080/api'})).behavior,'deny');
+  const fetchHook=options.hooks.PreToolUse.find(entry=>entry.matcher==='^WebFetch$').hooks[0];
+  assert.equal((await fetchHook({tool_input:{url:'http://192.168.1.1/'}})).hookSpecificOutput.permissionDecision,'deny');
+});
+
+test('WebFetch targets must be public http(s) addresses',async()=>{
+  const resolveTo=address=>async()=>[{address}];
+  for(const url of ['https://example.com/a','http://93.184.216.34/']) assert.equal(await publicWebUrl(url,resolveTo('93.184.216.34')),true);
+  for(const url of ['file:///etc/passwd','ftp://example.com/','https://user:pw@example.com/','http://localhost:3080/','http://LibreChat:3080/',
+    'http://cli-bridge:4000/','http://router.lan/','http://nas.local/','http://10.0.0.5/','http://172.21.0.2/','http://192.168.1.43:8443/',
+    'http://169.254.169.254/latest','http://[::1]/','http://[::ffff:127.0.0.1]/','http://[::ffff:7f00:1]/','http://[64:ff9b::a00:1]/','http://[fd00::1]/','http://0.0.0.0/','not a url'])
+    assert.equal(await publicWebUrl(url,resolveTo('93.184.216.34')),false,url);
+  assert.equal(await publicWebUrl('https://rebind.example/',resolveTo('192.168.1.43')),false);
+  assert.equal(await publicWebUrl('https://split.example/',async()=>[{address:'93.184.216.34'},{address:'10.0.0.1'}]),false);
+  assert.equal(await publicWebUrl('https://missing.example/',async()=>{throw Object.assign(Error('ENOTFOUND'),{code:'ENOTFOUND'});}),false);
 });

@@ -59,7 +59,7 @@ Precedencia: modelo general del entorno, preset, variable FAST/DEEP, opciones fi
 | reasoning_effort | minimal, low, medium, high, xhigh, max, ultra, persistent | low, medium, high, xhigh, max |
 | verbosity | low, medium, high | No |
 | reasoning_summary | auto, concise, detailed, none | No |
-| web_search nativo | Booleano | true se rechaza; usar relay de Roko |
+| web_search nativo | Booleano | Booleano: true añade WebSearch y WebFetch |
 
 La aceptación por el adaptador no garantiza disponibilidad para cada modelo/cuenta. El bridge propaga opciones nativas: Codex recibe model/modelReasoningEffort y configuración de resumen/verbosidad; Claude recibe model/effort y persistSession=false.
 
@@ -71,7 +71,7 @@ Las funciones se declaran con esquema de tipo function. El modelo devuelve una d
 
 Responses acepta `function_call` y `function_call_output` conservando call_id. Los elementos de entrada `reasoning`, incluido encrypted_content, son metadatos de transporte: se aceptan y omiten del transcript CLI. No se descifran ni se convierten en instrucciones o herramientas. Los demás tipos no soportados siguen rechazándose.
 
-Codex utiliza su sandbox workspace-write, approvalPolicy=never y búsqueda/red según la opción efectiva. Claude recibe Read/Write/Edit limitados al workspace y el MCP interno `mcp__workspace__execute`, con descripción pública opcional. No requiere otro servidor ni puerto.
+Codex utiliza su sandbox workspace-write, approvalPolicy=never y búsqueda/red según la opción efectiva. Claude recibe Read/Write/Edit limitados al workspace y el MCP interno `mcp__workspace__execute`, con descripción pública opcional. Con web_search activo recibe además WebSearch y WebFetch. WebFetch se ejecuta dentro del contenedor del bridge, que alcanza las redes de Roko y la LAN, por lo que un hook rechaza destinos no http(s), con credenciales, nombres de una sola etiqueta o locales (.local, .lan, .internal, .home.arpa) y cualquier dirección resuelta privada, loopback, link-local, CGNAT, multicast o NAT64. La comprobación DNS no cubre un rebinding posterior. No requiere otro servidor ni puerto.
 
 La shell de Claude utiliza el sandbox nativo de Codex, con red desactivada, permisos limitados y comprobación previa de aislamiento. Linux usa shell POSIX y Windows PowerShell. No hay fallback sin sandbox. Comandos: máximo 16000 caracteres, timeout de 1 a 120 segundos y captura máxima de 1 MiB, con respuesta textual adicionalmente acotada. El entorno heredado se filtra y se cancelan procesos hijos.
 

@@ -4,17 +4,16 @@ export class BridgeError extends Error {
   }
 }
 
-import { MODEL_IDS, MODEL_PRESETS } from './presets.mjs';
+import { MODEL_IDS } from './presets.mjs';
 const TEXT_ROLES = ['system', 'developer', 'user', 'assistant'];
 
-function separateNativeTools(tools, model) {
+function separateNativeTools(tools) {
   const native = (Array.isArray(tools) ? tools : []).filter(tool => tool?.type !== 'function');
   const unknown = native.filter(tool => !['web_search_preview', 'web_search'].includes(tool?.type));
   if (unknown.length) {
     const types = [...new Set(unknown.map(tool => tool?.type || 'unknown'))].join(', ');
     throw new BridgeError(422, `Native tool(s) ${types} need an OpenAI Responses runtime. This subscription bridge supports LibreChat function tools; use LibreChat Agent file search/execute_code functions or provide their function schemas.`, 'native_tool_runtime_required');
   }
-  if (native.length && MODEL_PRESETS[model]?.provider !== 'codex') throw new BridgeError(422, 'Native web_search is currently available only on the Codex endpoint.', 'native_tool_runtime_required');
   return native.length > 0;
 }
 
@@ -174,7 +173,7 @@ export function validateRequest(body) {
   if (!MODEL_IDS.includes(body.model)) throw new BridgeError(400, 'Unknown model. Use claude-max or gpt-codex.');
   if (body.stream !== undefined && typeof body.stream !== 'boolean') throw new BridgeError(400, 'stream must be boolean.');
   if (body.n !== undefined && body.n !== 1) throw new BridgeError(422, 'Only n=1 is supported.');
-  const webSearch = separateNativeTools(body.tools, body.model);
+  const webSearch = separateNativeTools(body.tools);
   const tools = normalizeTools((body.tools || []).filter(tool => tool?.type === 'function'), body.functions ? [body.functions] : undefined);
   const toolChoice = parseToolChoice(body.tool_choice ?? (body.function_call === 'none' ? 'none' : body.function_call), tools);
   if (toolChoice === 'required' && tools.length === 0) throw new BridgeError(400, 'tool_choice=required needs at least one function tool.');
@@ -256,7 +255,7 @@ export function validateResponsesRequest(body, previous = null) {
   const { conversation: added, attachments } = normalizeResponsesInput(body.input, systemParts);
   const conversation = mergeResponsesHistory(previous?.conversation, added);
   if (!conversation.some(item => item.role === 'user' || item.type === 'message' && item.role === 'user')) throw new BridgeError(400, 'Include at least one user message in input.');
-  const webSearch = separateNativeTools(body.tools, body.model);
+  const webSearch = separateNativeTools(body.tools);
   const tools = normalizeTools((body.tools || []).filter(tool => tool?.type === 'function'));
   const toolChoice = parseToolChoice(body.tool_choice, tools);
   if (toolChoice === 'required' && tools.length === 0) throw new BridgeError(400, 'tool_choice=required needs at least one function tool.');

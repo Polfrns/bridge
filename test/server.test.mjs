@@ -310,7 +310,7 @@ test('discovery advertises replay support and provider-specific CLI capabilities
   assert.equal(codex.capabilities.defaults.reasoning_effort, 'medium');
   assert.equal(deep.capabilities.defaults.reasoning_effort, 'high');
   assert.deepEqual(claude.capabilities.verbosity, []);
-  assert.equal(claude.capabilities.web_search, false);
+  assert.equal(claude.capabilities.web_search, true);
 });
 
 test('non-object JSON is a client error before resolving signed identity', async t => {
