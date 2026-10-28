@@ -1,31 +1,18 @@
 # CI y despliegue de producción
 
-Esta guía describe [bitbucket-pipelines.yml](bitbucket-pipelines.yml) y los scripts [ci/](ci/). Para una instalación local usa [DOCKER.md](DOCKER.md). No mezcles comandos de rebuild local con una instalación gestionada por imagen aprobada.
+Esta guía describe [bridge-ci-deploy.yml](.github/workflows/bridge-ci-deploy.yml) y los scripts [ci/](ci/). Para una instalación local usa [DOCKER.md](DOCKER.md). No mezcles rebuild local con una instalación gestionada por imagen aprobada.
 
-## Pipeline actual
+## GitHub Actions
 
-Las ramas distintas de main ejecutan tests/build en Bitbucket Cloud mediante bash ci/cloud-build.sh bridge test, sin publicar una imagen desplegable.
+Los pull requests construyen la imagen de CI y ejecutan `ci/test.sh` mediante `bash ci/cloud-build.sh bridge test`. Un push a `main` repite la validación, publica la imagen en `ghcr.io/polfrns/bridge` y guarda un manifiesto con su digest. El job `production` despliega esa misma imagen, sin reconstruirla.
 
-main ejecuta secuencialmente:
+El despliegue requiere un runner self-hosted Linux con etiquetas `self-hosted`, `linux` y `bridge-prod`, y el environment de GitHub `production`. Configura la variable `BRIDGE_DEPLOY_DIR` en ese environment. La carpeta debe contener el `.env` privado y `compose.yaml`. El runner necesita Docker, Compose v2, Bash, Python 3, `flock` y permiso de lectura del paquete GHCR.
 
-1. Tests/build en Cloud y publicación: deployment image-publish, runtime Cloud v3, step 2x y servicio Docker con 6144 MB. Ejecuta bash ci/cloud-build.sh bridge publish.
-2. Despliegue: deployment production en runner Linux Shell con etiquetas self.hosted, linux.shell y roko.bridge.prod. Ejecuta bash /opt/deploy-and-clean.sh bash ci/deploy.sh bridge.
+La imagen production hereda de la etapa `ci` del Dockerfile. Si falla una prueba, no se publica ni despliega. La suite y su alcance están en [TESTS.md](TESTS.md).
 
-La imagen production hereda de la etapa ci del Dockerfile. Un fallo de las pruebas bloquea la publicación y el siguiente paso. No se ejecutan tests/build en la VM como alternativa automática. /opt/deploy-and-clean.sh es un wrapper externo del servidor y su implementación no forma parte de este repositorio.
+GitHub Actions publica usando su `GITHUB_TOKEN` con permiso `packages: write`. El runner de producción usa el token del job para descargar la imagen. El paquete GHCR debe permitir acceso al repositorio `Polfrns/bridge`.
 
-La suite actual y su último resultado están en [TESTS.md](TESTS.md). No se certifican aquí ejecuciones de Bitbucket ni el estado de la VM.
-
-## Variables de Bitbucket
-
-| Ámbito | Variable | Uso |
-| --- | --- | --- |
-| Repository | CI_IMAGE_REPOSITORY | Referencia completa de imagen privada, sin esquema, tag ni digest; por ejemplo crg.apkg.io/tu-workspace/bridge. |
-| Deployment production | BRIDGE_DEPLOY_DIR | Directorio real con el .env privado y el estado del despliegue; por ejemplo /home/rokoface/services/bridge. |
-| Deployment image-publish | CI_REGISTRY_PUSH_USER / CI_REGISTRY_PUSH_TOKEN | Credenciales de publicación para un registro sin autenticación nativa; token Secured. |
-
-Los nombres de deployment deben coincidir con el YAML. Cuando el registro es crg.apkg.io y Pipelines proporciona BITBUCKET_PACKAGES_USERNAME/TOKEN, el script usa esas credenciales nativas. Para otro registro utiliza las variables de publicación. Los requisitos comerciales y permisos del registro se consultan en el servicio elegido; no se presuponen en esta guía.
-
-Las credenciales de publicación pertenecen al paso image-publish. La VM solo necesita lectura del registro. La referencia de variables está en [ci/variables.example](ci/variables.example).
+La referencia de variables está en [ci/variables.example](ci/variables.example).
 
 ## Preparar la VM
 

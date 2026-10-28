@@ -21,7 +21,7 @@ const argv = process.argv.slice(2);
 if (argv[argv.indexOf('--sandbox')+1] !== 'workspace-write' || !args.includes('sandbox_mode=\"workspace-write\"') || !args.includes('approval_policy=\"never\"')) process.exit(5);
 if (input.includes('summary-test')) {
  const summary = input.includes('summary-test-none') ? 'none' : 'detailed';
- if (!argv.includes('model_reasoning_summary='+JSON.stringify(summary)) || !argv.includes('web_search="live"') || !argv.includes('sandbox_workspace_write.network_access=true')) process.exit(6);
+ if (!argv.includes('model_reasoning_summary='+JSON.stringify(summary)) || !argv.includes('web_search="live"') || !argv.includes('sandbox_workspace_write.network_access=false')) process.exit(6);
 }
 const cwd = argv[argv.indexOf('--cd')+1];
 const schema = JSON.parse(readFileSync(argv[argv.indexOf('--output-schema')+1],'utf8'));
@@ -72,7 +72,7 @@ for (const event of [
   }
   const relay = {...request,...validateResponsesRequest({model:'gpt-codex',input:'lookup hello',tools:[{type:'function',name:'lookup',description:'Lookup a value',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}}]})};
   const toolEvents = await collect(relay);
-  assert.deepEqual(parseToolDecision(toolEvents.map(event=>event.text||'').join(''),relay),{type:'tool_call',name:'lookup',arguments:{query:'hello'}});
+  assert.deepEqual(parseToolDecision(toolEvents.map(event=>event.text||'').join(''),relay),{type:'tool_call',calls:[{name:'lookup',arguments:{query:'hello'}}]});
   const fileEvents = await collect({prompt:'create-real'});
   assert.equal(fileEvents.at(-1).files[0].filename,'result.pdf');
   await assert.rejects(collect({prompt:'create-missing'}),/Cannot replace a rejected file delivery/);

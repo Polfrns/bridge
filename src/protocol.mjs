@@ -70,40 +70,62 @@ function parseToolChoice(choice, tools) {
   throw new BridgeError(422, 'This bridge supports tool_choice auto, none, required, or one named function.');
 }
 
-function makeToolOutputSchema(tools) {
+export const MAX_PARALLEL_TOOL_CALLS = 8;
+
+function makeToolOutputSchema(tools, parallel) {
   const names = tools.map(tool => tool.name);
+  const call = {
+    name: { type: 'string', enum: ['', ...names] },
+    arguments_json: { type: 'string' },
+  };
   return {
     type: 'object', additionalProperties: false,
     properties: {
       action: { type: 'string', enum: ['message', 'tool_call'] },
       text: { type: 'string' },
-      name: { type: 'string', enum: ['', ...names] },
-      arguments_json: { type: 'string' },
+      ...call,
+      ...(parallel ? { additional_calls: {
+        type: 'array', maxItems: MAX_PARALLEL_TOOL_CALLS - 1,
+        items: { type: 'object', additionalProperties: false, properties: call, required: ['name', 'arguments_json'] },
+      } } : {}),
     },
-    required: ['action', 'text', 'name', 'arguments_json'],
+    required: ['action', 'text', 'name', 'arguments_json', ...(parallel ? ['additional_calls'] : [])],
   };
 }
 
-function toolDecisionPrompt(prompt, tools, toolChoice, system) {
+function parallelToolCalls(body) {
+  if (body.parallel_tool_calls != null && typeof body.parallel_tool_calls !== 'boolean') throw new BridgeError(400, 'parallel_tool_calls must be boolean.');
+  return body.parallel_tool_calls !== false;
+}
+
+function toolDecisionPrompt(prompt, tools, toolChoice, system, parallelToolCalls = true) {
   const allowed = toolChoice === 'none' ? [] :
     toolChoice === 'required' ? tools :
     toolChoice?.type === 'allowed_tools' ? tools.filter(tool => toolChoice.names.includes(tool.name)) :
     typeof toolChoice === 'object' ? tools.filter(tool => tool.name === toolChoice.name) : tools;
+  // A forced single function is one call by definition.
+  const parallel = parallelToolCalls !== false && toolChoice?.type !== 'function';
   const instructions = [
     'You are responding through LibreChat. Any tool call you return will be executed by LibreChat, where its normal permissions and approval hooks apply.',
-    'Choose either a final user-facing message or exactly one function call. Never claim a function ran unless its result appears in the transcript.',
+    parallel
+      ? `Choose either a final user-facing message or function calls. Return several calls (up to ${MAX_PARALLEL_TOOL_CALLS}) only when they are independent and none needs another's result; otherwise return one and wait. Never claim a function ran unless its result appears in the transcript.`
+      : 'Choose either a final user-facing message or exactly one function call. Never claim a function ran unless its result appears in the transcript.',
     `Tool choice: ${toolChoice === 'none' ? 'Do not call tools.' : toolChoice === 'required' || typeof toolChoice === 'object' && toolChoice.mode === 'required' || toolChoice?.type === 'function' ? 'Call one available function.' : 'Call a function only when useful.'}`,
     'Available functions:', JSON.stringify(allowed),
-    'Return only JSON matching this shape: {"action":"message"|"tool_call","text":"...","name":"function name or empty","arguments_json":"..."}.',
+    parallel
+      ? 'Return only JSON matching this shape: {"action":"message"|"tool_call","text":"...","name":"function name or empty","arguments_json":"...","additional_calls":[{"name":"...","arguments_json":"..."}]}.'
+      : 'Return only JSON matching this shape: {"action":"message"|"tool_call","text":"...","name":"function name or empty","arguments_json":"..."}.',
     'For a message, set action="message", put the full answer in text, name="", arguments_json="{}". For a tool call, set action="tool_call", text="", set name to the exact function name, and arguments_json to a JSON-encoded object string.',
   ];
+  if (parallel) instructions.push('Put the first call in name/arguments_json and any further independent calls in additional_calls; otherwise set additional_calls=[].');
   if (toolChoice === 'none') instructions.push('Tools are disabled for this request even if function descriptions appear in prior messages.');
   return {
     system: [system, instructions.join('\n')].filter(Boolean).join('\n\n'),
     prompt: `${prompt}\n\nSelect the next action now.`,
-    outputSchema: makeToolOutputSchema(tools),
+    outputSchema: makeToolOutputSchema(tools, parallel),
     tools: allowed,
     toolChoice,
+    parallelToolCalls: parallel,
     toolRelay: allowed.length > 0 && toolChoice !== 'none',
   };
 }
@@ -182,7 +204,7 @@ export function validateRequest(body) {
 
   const history = messages.filter(m => !['system', 'developer'].includes(m.role));
   const base = { model: body.model, stream: body.stream === true, system, prompt: transcriptPrompt(history), attachments, webSearch };
-  const relay = toolDecisionPrompt(base.prompt, tools, toolChoice, system);
+  const relay = toolDecisionPrompt(base.prompt, tools, toolChoice, system, parallelToolCalls(body));
   return { ...base, ...relay, prompt: relay.toolRelay ? relay.prompt : base.prompt, system: relay.toolRelay ? relay.system : system };
 }
 
@@ -263,7 +285,7 @@ export function validateResponsesRequest(body, previous = null) {
 
   const prompt = transcriptPrompt(conversation);
   const base = { model: body.model, stream: body.stream === true, system, prompt, tools, toolChoice, attachments, webSearch };
-  const relay = toolDecisionPrompt(prompt, tools, toolChoice, system);
+  const relay = toolDecisionPrompt(prompt, tools, toolChoice, system, parallelToolCalls(body));
   return { ...base, ...relay, prompt: relay.toolRelay ? relay.prompt : prompt, system: relay.toolRelay ? relay.system : system, conversation, toolDecisionContinuation: Boolean(previous?.conversation?.some(item => item.type === 'function_call')) };
 }
 
@@ -287,16 +309,22 @@ export function parseToolDecision(text, request) {
     return { type: 'message', text: result.text };
   }
   if (result.action === 'tool_call') {
-    const tool = request.tools.find(item => item.name === result.name);
-    if (!tool) throw new BridgeError(502, 'The model selected a function that was not supplied by LibreChat.', 'invalid_tool_call');
-    let args;
-    try { args = JSON.parse(result.arguments_json || '{}'); } catch { throw new BridgeError(502, 'The model returned function arguments that are not valid JSON.', 'invalid_tool_call'); }
-    if (!args || typeof args !== 'object' || Array.isArray(args)) throw new BridgeError(502, 'The model returned invalid function arguments.', 'invalid_tool_call');
     if (request.toolChoice === 'none') throw new BridgeError(502, 'The model attempted a tool call when tools were disabled.', 'invalid_tool_call');
-    if (request.toolChoice === 'required' || request.toolChoice?.mode === 'required') { /* The decision above guarantees a call. */ }
-    if (request.toolChoice?.type === 'function' && request.toolChoice.name !== tool.name) throw new BridgeError(502, 'The model did not select the required function.', 'invalid_tool_call');
-    if (request.toolChoice?.type === 'allowed_tools' && !request.toolChoice.names.includes(tool.name)) throw new BridgeError(502, 'The model selected a function outside allowed_tools.', 'invalid_tool_call');
-    return { type: 'tool_call', name: tool.name, arguments: args };
+    const extra = result.additional_calls ?? [];
+    if (!Array.isArray(extra)) throw new BridgeError(502, 'The model returned invalid additional function calls.', 'invalid_tool_call');
+    if (extra.length && !request.parallelToolCalls) throw new BridgeError(502, 'The model returned several function calls when only one is allowed.', 'invalid_tool_call');
+    if (extra.length >= MAX_PARALLEL_TOOL_CALLS) throw new BridgeError(502, 'The model returned too many function calls.', 'invalid_tool_call');
+    const calls = [result, ...extra].map(call => {
+      const tool = request.tools.find(item => item.name === call?.name);
+      if (!tool) throw new BridgeError(502, 'The model selected a function that was not supplied by LibreChat.', 'invalid_tool_call');
+      let args;
+      try { args = JSON.parse(call.arguments_json || '{}'); } catch { throw new BridgeError(502, 'The model returned function arguments that are not valid JSON.', 'invalid_tool_call'); }
+      if (!args || typeof args !== 'object' || Array.isArray(args)) throw new BridgeError(502, 'The model returned invalid function arguments.', 'invalid_tool_call');
+      if (request.toolChoice?.type === 'function' && request.toolChoice.name !== tool.name) throw new BridgeError(502, 'The model did not select the required function.', 'invalid_tool_call');
+      if (request.toolChoice?.type === 'allowed_tools' && !request.toolChoice.names.includes(tool.name)) throw new BridgeError(502, 'The model selected a function outside allowed_tools.', 'invalid_tool_call');
+      return { name: tool.name, arguments: args };
+    });
+    return { type: 'tool_call', calls };
   }
   throw new BridgeError(502, 'The model returned an unsupported structured tool decision.', 'invalid_model_output');
 }

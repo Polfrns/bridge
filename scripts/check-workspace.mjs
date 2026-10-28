@@ -30,8 +30,20 @@ try {
     if (result.exitCode !== 0) throw new Error(`Workspace Office probe failed: ${result.stderr || result.stdout}`);
     await validateFinishedFiles([{path: 'edited.docx'}], cwd);
     officePython = 'DOCX red text verified';
+    const chart = join(cwd, 'chart-probe.py');
+    await writeFile(chart, `import pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nframe=pd.DataFrame({'x':[1,2,3],'y':[2,4,8]})\nassert frame['y'].sum()==14\nframe.plot(x='x',y='y').figure.savefig('chart.png')\n`, { mode: 0o600 });
+    const charted = await executor.execute(process.platform === 'win32' ? `& ${quote(python)} ${quote(chart)}; exit $LASTEXITCODE` : `${quote(python)} ${quote(chart)}`);
+    if (charted.exitCode !== 0) throw new Error(`Workspace data/chart probe failed: ${charted.stderr || charted.stdout}`);
+    await validateFinishedFiles([{path: 'chart.png'}], cwd);
+    officePython += '; pandas chart verified';
   }
-  console.log('[bridge workspace check]', JSON.stringify({ status: 'ok', ...proof, officePython, providerLoginRequired: false }));
+  // Optional system tools: report what the sandboxed shell can actually run.
+  const tools = {};
+  for (const [name, args] of [['pandoc', '--version'], ['dot', '-V']]) {
+    const probe = await executor.execute(process.platform === 'win32' ? `& ${name} ${args} *> $null; exit $LASTEXITCODE` : `${name} ${args} >/dev/null 2>&1`);
+    tools[name] = probe.exitCode === 0 ? 'available' : 'unavailable';
+  }
+  console.log('[bridge workspace check]', JSON.stringify({ status: 'ok', ...proof, officePython, tools, providerLoginRequired: false }));
 } catch (error) {
   console.error(error.message); process.exitCode = 1;
 } finally { if (root) await rm(root, { recursive: true, force: true }); }

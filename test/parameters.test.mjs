@@ -27,6 +27,7 @@ for (const api of ['chat','responses']) for (const stream of [false,true]) test(
     assert.equal(observed.webSearch,web_search);
     assert.deepEqual(codexResponseConfig(observed.cliOptions),{model_verbosity:'high',model_reasoning_summary:summary});
     assert.equal(codexThreadOptions(observed,'/tmp').webSearchMode,web_search?'live':'disabled');
+    assert.equal(codexThreadOptions(observed,'/tmp').networkAccessEnabled,false);
     assert.equal(codexThreadOptions(observed,'/tmp').modelReasoningEffort,'minimal');
     assert.equal(text.includes('Estoy preparando la respuesta.'),summary!=='none');
     if(api==='responses'){

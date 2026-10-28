@@ -35,7 +35,7 @@ test('scripted Claude ordinary answer is validated, buffered, and never invokes 
   const {cwd,before}=await workspace(t);const sdk=scriptedSdk(async()=>({structured_output:envelope('Hola')}));
   const events=await run(cwd,before,sdk);assert.equal(events.find(event=>event.text).text,'Hola');assert.equal(events.some(event=>event.files),false);
   const options=sdk.calls[0].options;
-  assert.deepEqual(options.tools,['Read','Write','Edit']);assert.ok(options.allowedTools.includes(EXEC_TOOL));
+  assert.deepEqual(options.tools,['Read','Write','Edit','NotebookEdit','Glob','Grep']);assert.ok(options.allowedTools.includes(EXEC_TOOL));
   assert.equal(options.persistSession,true);assert.equal(options.strictMcpConfig,true);assert.deepEqual(options.settingSources,[]);
   assert.match(options.systemPrompt,/file-tools.py/);assert.doesNotMatch(options.systemPrompt,/has no shell/);
   assert.equal(sdk.calls[0].wasClosed(),true);
@@ -47,6 +47,15 @@ test('file permission hook denies outside paths even when Read is pre-approved',
   assert.equal((await hook({tool_input:{file_path:join(root,'secret')}})).hookSpecificOutput.permissionDecision,'deny');
   assert.deepEqual(await hook({tool_input:{file_path:'outputs/new.txt'}}),{});
   assert.equal((await options.canUseTool('Bash',{command:'echo unsafe'})).behavior,'deny');
+  const deny=async(tool_name,tool_input)=>(await hook({tool_name,tool_input}))?.hookSpecificOutput?.permissionDecision;
+  assert.equal(await deny('Glob',{pattern:'**/*.docx'}),undefined);
+  assert.equal(await deny('Grep',{pattern:'total',path:'outputs',glob:'*.csv'}),undefined);
+  assert.equal(await deny('NotebookEdit',{notebook_path:'outputs/a.ipynb',new_source:'x'}),undefined);
+  for(const [name,input] of [['Glob',{pattern:'../**'}],['Glob',{pattern:'/etc/*'}],['Glob',{pattern:'C:/Users/*'}],['Glob',{pattern:'*',path:root}],
+    ['Grep',{pattern:'x',path:join(root,'secret')}],['Grep',{pattern:'x',glob:'../*'}],['NotebookEdit',{notebook_path:join(root,'n.ipynb'),new_source:'x'}]]) {
+    assert.equal(await deny(name,input),'deny',`${name} ${JSON.stringify(input)}`);
+    assert.equal((await options.canUseTool(name,input)).behavior,'deny');
+  }
   if(process.platform!=='win32') {
     await symlink(root,join(cwd,'escape'));
     assert.equal((await hook({tool_input:{file_path:'escape/new.txt'}})).hookSpecificOutput.permissionDecision,'deny');
@@ -153,11 +162,11 @@ test('scripted Claude executes a real Python DOCX edit and repairs corrupt outpu
 test('Claude gets native web tools only when web search is enabled',async t=>{
   const {cwd,before}=await workspace(t);
   const off=scriptedSdk(async()=>({structured_output:envelope('Hola')}));await run(cwd,before,off);
-  assert.deepEqual(off.calls[0].options.tools,['Read','Write','Edit']);
+  assert.deepEqual(off.calls[0].options.tools,['Read','Write','Edit','NotebookEdit','Glob','Grep']);
   assert.equal((await off.calls[0].options.canUseTool('WebSearch',{query:'news'})).behavior,'deny');
   const on=scriptedSdk(async()=>({structured_output:envelope('Hola')}));await run(cwd,before,on,{},{...request,webSearch:true});
   const options=on.calls[0].options;
-  assert.deepEqual(options.tools,['Read','Write','Edit',...WEB_TOOLS]);
+  assert.deepEqual(options.tools,['Read','Write','Edit','NotebookEdit','Glob','Grep',...WEB_TOOLS]);
   assert.equal((await options.canUseTool('WebSearch',{query:'news'})).behavior,'allow');
   assert.equal((await options.canUseTool('WebFetch',{url:'http://127.0.0.1:3080/api'})).behavior,'deny');
   const fetchHook=options.hooks.PreToolUse.find(entry=>entry.matcher==='^WebFetch$').hooks[0];

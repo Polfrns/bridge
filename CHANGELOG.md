@@ -4,6 +4,12 @@ La versión declarada sigue siendo 0.7.3. Los cambios del árbol de trabajo post
 
 ## Sin publicar — estado actual del repositorio
 
+- Seguridad: la shell de Codex ya no recibe red al activar la búsqueda web. La búsqueda en vivo sigue funcionando porque la ejecuta el proveedor; antes un comando del sandbox podía alcanzar Roko y la LAN.
+- Dependencias: zod 4.6.7 y parches transitivos de body-parser, fast-uri, ip-address y qs (npm audit sin vulnerabilidades). Se deniega el postinstall de protobufjs, que solo comprobaba versiones. El build ya no muestra avisos de debconf, npm notice/--force ni SecretsUsedInArgOrEnv; CODEX_AUTH_DIR/CLAUDE_AUTH_DIR salen del Dockerfile porque coincidían con CODEX_HOME/CLAUDE_CONFIG_DIR, que ya son su valor por defecto.
+- Claude recibe Glob, Grep y NotebookEdit, confinados al workspace como Read/Write/Edit.
+- El relay de funciones admite hasta 8 llamadas independientes por turno (`additional_calls`), respetando `parallel_tool_calls=false` y tool_choice.
+- Toolkit: pandas, numpy, matplotlib, pdfplumber, reportlab y WeasyPrint; la imagen añade pandoc, Graphviz y OCR en catalán, francés, portugués, alemán e italiano. Nueva operación `recalc` para detectar errores de fórmula; `validate` comprueba la sintaxis de JSONL, CSV/TSV, TOML y Python. check:workspace prueba pandas/matplotlib y la disponibilidad de pandoc y dot en el sandbox.
+
 - Búsqueda web nativa para Claude: con web_search activo recibe WebSearch y WebFetch, y las capacidades publicadas lo anuncian. Un hook limita WebFetch a destinos http(s) públicos para que el contenedor no sirva de acceso a Roko ni a la LAN. Roko deja de depender de Codex para buscar.
 
 - Texto ordinario en directo desde eventos compatibles de Claude y Codex hacia Chat Completions y Responses, sin revisión semántica adicional ni repetición final.
@@ -18,7 +24,7 @@ La versión declarada sigue siendo 0.7.3. Los cambios del árbol de trabajo post
 - Correcciones de regresiones: esperas de validación por registros V1 decodificados y localización del único terminal de un span aunque haya actualizaciones previas de contenido.
 - Documentación consolidada: observabilidad en OBSERVABILITY.md, CI y despliegue en DEPLOY.md y resultados en TESTS.md. Se retiran las notas transitorias de ZIP/hotfix y los informes duplicados.
 
-Última suite completa registrada: 210 pruebas Node y 9 Python aprobadas en la etapa Docker ci. Alcance y límites en [TESTS.md](TESTS.md).
+Última suite completa registrada: 215 pruebas Node y 11 Python aprobadas en la etapa Docker ci. Alcance y límites en [TESTS.md](TESTS.md).
 
 ## 0.7.3 — Responses reasoning replay
 

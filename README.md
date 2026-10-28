@@ -8,7 +8,7 @@ La versión declarada en [package.json](package.json) es **0.7.3**. Esta documen
 
 - Instalación local con contenedores y conexión a Roko: [DOCKER.md](DOCKER.md).
 - Instalación nativa en Ubuntu o Windows: [UBUNTU.md](UBUNTU.md).
-- Producción con Bitbucket, registro y rollback: [DEPLOY.md](DEPLOY.md).
+- Producción con GitHub Actions, GHCR y rollback: [DEPLOY.md](DEPLOY.md).
 
 La configuración de referencia está en [.env.example](.env.example). Conserva tu `.env` existente al actualizar. El bridge y Roko deben compartir `BRIDGE_API_KEY` / `CLAUDE_BRIDGE_KEY`; cada inferencia requiere además identidad firmada por el backend de Roko.
 
@@ -35,7 +35,7 @@ El texto ordinario se envía según llegan fragmentos compatibles del SDK, sin u
 
 Las tarjetas muestran operaciones reales y comentarios públicos mientras se ejecuta el proveedor. Pueden incluir comandos, argumentos seleccionados y salida textual en la conversación autenticada. La política de exportación a Langfuse es independiente; no se muestra pensamiento privado. Véase [OBSERVABILITY.md](OBSERVABILITY.md).
 
-Roko ejecuta las funciones externas que el modelo pide mediante el relay, incluidas las herramientas MCP configuradas allí. El bridge no ejecuta esas funciones. Claude dispone además de una herramienta interna `mcp__workspace__execute` y lectura/edición restringidas al workspace; Codex utiliza sus herramientas nativas. La búsqueda web nativa está disponible para ambos proveedores cuando se activa: Codex usa su búsqueda en vivo y Claude recibe WebSearch y WebFetch; WebFetch solo alcanza direcciones http(s) públicas.
+Roko ejecuta las funciones externas que el modelo pide mediante el relay, incluidas las herramientas MCP configuradas allí. El bridge no ejecuta esas funciones. Claude dispone además de una herramienta interna `mcp__workspace__execute` y de Read, Write, Edit, NotebookEdit, Glob y Grep restringidos al workspace; Codex utiliza sus herramientas nativas. La búsqueda web nativa está disponible para ambos proveedores cuando se activa: Codex usa su búsqueda en vivo y Claude recibe WebSearch y WebFetch; WebFetch solo alcanza direcciones http(s) públicas. La shell de ambos proveedores nunca tiene red. Una respuesta del relay puede pedir varias funciones independientes a la vez (máximo 8) salvo `parallel_tool_calls=false`.
 
 ## Archivos
 
@@ -43,9 +43,9 @@ El bridge conserva los bytes originales y prepara texto o vistas con las herrami
 
 | Grupo | Tratamiento |
 | --- | --- |
-| Office y OpenDocument | Lectura/edición con bibliotecas Python; conversión y vistas con LibreOffice. La conversión puede cambiar diseño, macros o fórmulas. |
-| PDF e imágenes | Texto, vistas, edición y validación según formato; OCR con Tesseract. |
-| Texto, datos y código | Lectura acotada y validación cuando existe un lector compatible. |
+| Office y OpenDocument | Lectura/edición con bibliotecas Python; conversión y vistas con LibreOffice; recálculo de fórmulas para detectar errores. La conversión puede cambiar diseño, macros o fórmulas. |
+| PDF e imágenes | Texto, vistas, edición y validación según formato; tablas con pdfplumber; creación con reportlab o WeasyPrint (HTML/CSS); OCR con Tesseract. |
+| Texto, datos y código | Lectura acotada; validación sintáctica de JSON, JSONL, CSV/TSV, TOML y Python. Análisis y gráficos con pandas, numpy y matplotlib; conversión de documentos con pandoc y diagramas con Graphviz. |
 | ZIP, 7z, TAR y compresiones | Extracción limitada, sin rutas de escape, enlaces ni extracción recursiva de archivos internos. |
 | Audio y vídeo | Metadatos y fotogramas con FFprobe/FFmpeg; transcripción opcional con modelo Faster-Whisper local. |
 | Otros binarios | Transporte del original; no implica disponer de lector, editor o compilador. |
@@ -65,7 +65,7 @@ Los entregables deben existir bajo `outputs/`, ser regulares, no vacíos y haber
 
 El timeout predeterminado es 600000 ms y la concurrencia máxima es 2. Cada petición recibe runtime, HOME y temporales nuevos; se copia solo la autenticación OAuth necesaria y se limpia al terminar. El historial y los adjuntos reenviados por Roko proporcionan la continuidad.
 
-El sandbox requiere comprobación en el host final. No hay fallback de shell sin aislamiento. La imagen Docker incluye Node 24, Python, LibreOffice, FFmpeg, Tesseract y bubblewrap; instala las dependencias fijadas en el lockfile.
+El sandbox requiere comprobación en el host final. No hay fallback de shell sin aislamiento. La imagen Docker incluye Node 24, Python, LibreOffice, FFmpeg, Tesseract, pandoc, Graphviz, Pango (WeasyPrint) y bubblewrap; instala las dependencias fijadas en el lockfile.
 
 ## Documentación
 

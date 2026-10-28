@@ -7,7 +7,7 @@ case "$ci_app" in
   bridge) deploy_dir=${BRIDGE_DEPLOY_DIR:?Set BRIDGE_DEPLOY_DIR}; service=bridge; config_files=(compose.yaml) ;;
   *) echo 'Unknown service.' >&2; exit 2 ;;
 esac
-# Shell-runner steps may inherit Bitbucket's Docker-in-Docker endpoint.
+# Self-hosted runners may use a remote Docker endpoint.
 # Deployment and manual management use this VM's daemon and existing registry auth.
 unset DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH
 export DOCKER_HOST=unix:///var/run/docker.sock

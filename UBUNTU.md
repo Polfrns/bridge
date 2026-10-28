@@ -11,7 +11,7 @@ Describe el código actual con versión declarada 0.7.3. Los cambios locales pos
 - Una instalación local por sistema operativo; el `package-lock.json` fija las dependencias de Node.
 - Permisos para ejecutar el sandbox del proveedor en el host.
 
-LibreOffice, FFmpeg y Tesseract son opcionales. Instálalos solo si necesitas conversión de Office, análisis de audio/vídeo o OCR. El toolkit Python básico instala bibliotecas para imágenes, PDF y formatos Office.
+LibreOffice, FFmpeg, Tesseract, pandoc y Graphviz son opcionales. Instálalos solo si necesitas conversión de Office, análisis de audio/vídeo, OCR, conversión de documentos o diagramas. El toolkit Python básico instala bibliotecas para imágenes, PDF, formatos Office, datos (pandas/numpy), gráficos (matplotlib) y creación de PDF (reportlab/WeasyPrint). WeasyPrint necesita Pango del sistema; en Windows suele faltar y `setup:files` lo avisa sin fallar.
 
 ## Ubuntu
 
@@ -21,7 +21,7 @@ Instala Node 22+, Python, bubblewrap y los paquetes de sistema que necesites. Ej
 sudo apt update
 sudo apt install -y python3 python3-venv bubblewrap ca-certificates \
   libreoffice-writer libreoffice-calc libreoffice-impress \
-  ffmpeg tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa fonts-dejavu-core
+  ffmpeg tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa fonts-dejavu-core \n  pandoc graphviz libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 ```
 
 Desde la carpeta del proyecto:

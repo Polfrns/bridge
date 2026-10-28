@@ -81,7 +81,9 @@ export function codexThreadOptions(request, cwd) {
   return {
     workingDirectory: cwd, skipGitRepoCheck: true,
     sandboxMode: 'workspace-write', approvalPolicy: 'never',
-    networkAccessEnabled: request.webSearch, webSearchMode: request.webSearch ? 'live' : 'disabled',
+    // Live search is hosted by the provider. The shell sandbox stays offline:
+    // the bridge container reaches Roko's networks and the LAN.
+    networkAccessEnabled: false, webSearchMode: request.webSearch ? 'live' : 'disabled',
     ...(options.model ? { model: options.model } : {}),
     modelReasoningEffort: options.reasoning_effort,
   };

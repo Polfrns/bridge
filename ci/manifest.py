@@ -17,9 +17,9 @@ def validate(data: dict[str, object], app: str, commit: str, build: str) -> dict
 
 def main() -> None:
     action, app=sys.argv[1:3]
-    commit=os.environ['BITBUCKET_COMMIT'];build=os.environ['BITBUCKET_BUILD_NUMBER']
+    commit=os.environ['GITHUB_SHA'];build=os.environ['GITHUB_RUN_NUMBER']
     if app not in ('roko','bridge') or not re.fullmatch(r'[a-f0-9]{40}',commit) or not re.fullmatch(r'[0-9]{1,12}',build):
-        raise ValueError('Invalid service or Bitbucket identifiers')
+        raise ValueError('Invalid service or GitHub Actions identifiers')
     if action=='write':
         data={'app':app,'commit':commit,'build':int(build),'image':sys.argv[3],'image_id':sys.argv[4]}
         print(json.dumps(validate(data,app,commit,build)))

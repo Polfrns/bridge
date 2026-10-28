@@ -20,7 +20,7 @@ Las tarjetas son presentación de operaciones observadas, no instrucciones ejecu
 
 La extensión/MIME reconocida no implica lector, editor o validador completo. Los límites están en [SPEC.md](SPEC.md); Base64 también cuenta para el cuerpo HTTP.
 
-La validación puede ser checked, partial o unavailable según el toolkit. Que un archivo pase la comprobación estructural no garantiza exactitud de contenido, diseño, fórmulas o macros. La conversión Office puede perder funciones propietarias; XLSB no tiene escritor dedicado. Transcripción necesita pesos locales previamente instalados.
+La validación puede ser checked, partial o unavailable según el toolkit. Los errores de fórmula no se rechazan automáticamente, porque una hoja puede contenerlos legítimamente; el modelo debe usar recalc. El recálculo usa LibreOffice y puede diferir de Excel en funciones no compatibles. Que un archivo pase la comprobación estructural no garantiza exactitud de contenido, diseño, fórmulas o macros. La conversión Office puede perder funciones propietarias; XLSB no tiene escritor dedicado. Transcripción necesita pesos locales previamente instalados.
 
 Producir un EXE Windows requiere una herramienta adecuada para ese destino. Las instrucciones exigen comprobar la cadena de compilación y explicar las partes no disponibles; un binario Linux o un fuente no son un EXE Windows validado.
 
