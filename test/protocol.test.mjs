@@ -135,7 +135,7 @@ test('Chat Completions tool definitions and tool history are normalized', () => 
   assert.equal(request.toolRelay, true);
   assert.equal(request.stream, true);
   assert.match(request.prompt, /file contents/);
-  assert.deepEqual(parseToolDecision(JSON.stringify({ action: 'tool_call', text: '', name: 'read_file', arguments_json: '{}' }), request), { type: 'tool_call', name: 'read_file', arguments: {} });
+  assert.deepEqual(parseToolDecision(JSON.stringify({ action: 'tool_call', text: '', name: 'read_file', arguments_json: '{}' }), request), { type: 'tool_call', calls: [{ name: 'read_file', arguments: {} }] });
 });
 
 test('Responses web search maps to Codex native live search; hosted tools fail clearly', () => {
@@ -166,4 +166,19 @@ test('Responses accepts the base64 file shape emitted by LangChain 1.4.x', () =>
   assert.equal(request.attachments.length, 1);
   assert.equal(request.attachments[0].filename, 'prueba.docx');
   assert.equal(Buffer.from(request.attachments[0].data, 'base64').toString(), 'Hola');
+});
+
+test('additional relay calls are validated individually', () => {
+  const tools = ['read_file', 'write_file'].map(name => ({ type: 'function', function: { name, parameters: { type: 'object', properties: {} } } }));
+  const request = validateRequest({ model: 'claude-max', messages: [{ role: 'user', content: 'Go' }], tools });
+  const decide = extra => parseToolDecision(JSON.stringify({ action: 'tool_call', text: '', name: 'read_file', arguments_json: '{}', additional_calls: extra }), request);
+  assert.deepEqual(decide([{ name: 'write_file', arguments_json: '{"a":1}' }]).calls.map(call => call.name), ['read_file', 'write_file']);
+  assert.throws(() => decide([{ name: 'unknown', arguments_json: '{}' }]), /not supplied/);
+  assert.throws(() => decide([{ name: 'write_file', arguments_json: '[]' }]), /invalid function arguments/);
+  assert.throws(() => decide(Array.from({ length: 8 }, () => ({ name: 'read_file', arguments_json: '{}' }))), /too many/);
+  const allowed = validateRequest({ model: 'claude-max', messages: [{ role: 'user', content: 'Go' }], tools, tool_choice: { type: 'allowed_tools', tools: [{ name: 'read_file' }] } });
+  assert.throws(() => parseToolDecision(JSON.stringify({ action: 'tool_call', text: '', name: 'read_file', arguments_json: '{}', additional_calls: [{ name: 'write_file', arguments_json: '{}' }] }), allowed), /not supplied|outside allowed_tools/);
+  const forced = validateRequest({ model: 'claude-max', messages: [{ role: 'user', content: 'Go' }], tools, tool_choice: { type: 'function', function: { name: 'read_file' } } });
+  assert.equal(forced.parallelToolCalls, false);
+  assert.throws(() => validateRequest({ model: 'claude-max', messages: [{ role: 'user', content: 'Go' }], tools, parallel_tool_calls: 'yes' }), /must be boolean/);
 });

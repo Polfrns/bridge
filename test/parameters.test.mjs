@@ -27,6 +27,7 @@ for (const api of ['chat','responses']) for (const stream of [false,true]) test(
     assert.equal(observed.webSearch,web_search);
     assert.deepEqual(codexResponseConfig(observed.cliOptions),{model_verbosity:'high',model_reasoning_summary:summary});
     assert.equal(codexThreadOptions(observed,'/tmp').webSearchMode,web_search?'live':'disabled');
+    assert.equal(codexThreadOptions(observed,'/tmp').networkAccessEnabled,false);
     assert.equal(codexThreadOptions(observed,'/tmp').modelReasoningEffort,'minimal');
     assert.equal(text.includes('Estoy preparando la respuesta.'),summary!=='none');
     if(api==='responses'){
@@ -50,7 +51,7 @@ for (const api of ['chat','responses']) for (const stream of [false,true]) test(
 test('CLI validators reject unavailable generation controls and unsafe configuration',()=>{
   for(const body of [{temperature:0.4},{top_p:0.2},{max_output_tokens:10},{max_tokens:10},{stop:['END']},{frequency_penalty:1},{seed:3},{cli_options:{web_search:'true'}},{cli_options:{sandbox_mode:'danger-full-access'}}]) assert.throws(()=>resolveCliOptions('gpt-codex',body,{},{}));
   assert.doesNotThrow(()=>resolveCliOptions('gpt-codex',{temperature:1,top_p:1,frequency_penalty:0,presence_penalty:0}, {},{}));
-  assert.throws(()=>resolveCliOptions('claude-max',{web_search:true},{},{}),/only enabled on Codex/);
+  assert.equal(resolveCliOptions('claude-max',{web_search:true},{},{}).web_search,true);
   assert.equal(resolveCliOptions('gpt-codex',{cli_options:{web_search:false}},{web_search:true},{}).web_search,false);
 });
 

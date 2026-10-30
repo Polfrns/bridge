@@ -250,7 +250,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 600000, 
       if (api === 'chat') {
         const content = bridgeOutputContent(decision.text, collected.files);
         const choice = decision.type === 'tool_call'
-          ? { index: 0, message: { role: 'assistant', content: content || null, tool_calls: [{ id: 'call_' + randomUUID(), type: 'function', function: { name: decision.name, arguments: JSON.stringify(decision.arguments) } }] }, finish_reason: 'tool_calls' }
+          ? { index: 0, message: { role: 'assistant', content: content || null, tool_calls: decision.calls.map(call => ({ id: 'call_' + randomUUID(), type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) }, finish_reason: 'tool_calls' }
           : { index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' };
         if (activityLines.length) choice.message.reasoning_content = activityLines.join('');
         if (request.stream) {
@@ -259,8 +259,9 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 600000, 
           startChat();
           if (content && !liveText) send(chunk({ content }));
           if (decision.type === 'tool_call') {
-            const toolCall = choice.message.tool_calls[0];
-            send(chunk({ tool_calls: [{ index: 0, id: toolCall.id, type: 'function', function: { name: toolCall.function.name, arguments: toolCall.function.arguments } }] }));
+            for (const [index, toolCall] of choice.message.tool_calls.entries()) {
+              send(chunk({ tool_calls: [{ index, id: toolCall.id, type: 'function', function: { name: toolCall.function.name, arguments: toolCall.function.arguments } }] }));
+            }
             send(chunk({}, 'tool_calls'));
           } else send(chunk({}, 'stop'));
           if (body.stream_options?.include_usage && collected.usage) send({ id, object: 'chat.completion.chunk', created, model: request.model, choices: [], usage: collected.usage });
@@ -270,17 +271,17 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 600000, 
       }
 
       const responseContent = bridgeOutputContent(decision.text, collected.files);
-      const outputItem = decision.type === 'tool_call'
-        ? { id: 'fc_' + randomUUID().replaceAll('-', ''), type: 'function_call', status: 'completed', call_id: 'call_' + randomUUID().replaceAll('-', ''), name: decision.name, arguments: JSON.stringify(decision.arguments) }
-        : { id: liveMessageId, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: responseContent, annotations: [] }] };
-      const finalConversation = [...request.conversation, decision.type === 'tool_call'
-        ? { type: 'function_call', call_id: outputItem.call_id, name: decision.name, arguments: outputItem.arguments }
-        : { role: 'assistant', content: decision.text }];
+      const outputItems = decision.type === 'tool_call'
+        ? decision.calls.map(call => ({ id: 'fc_' + randomUUID().replaceAll('-', ''), type: 'function_call', status: 'completed', call_id: 'call_' + randomUUID().replaceAll('-', ''), name: call.name, arguments: JSON.stringify(call.arguments) }))
+        : [{ id: liveMessageId, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: responseContent, annotations: [] }] }];
+      const finalConversation = [...request.conversation, ...(decision.type === 'tool_call'
+        ? outputItems.map(item => ({ type: 'function_call', call_id: item.call_id, name: item.name, arguments: item.arguments }))
+        : [{ role: 'assistant', content: decision.text }])];
       saveState(id, { conversation: finalConversation, system: request.system, model: request.model, ownerKey: context.ownerKey });
       const responseObject = (status, output, usage = null) => ({
         id, object: 'response', created_at: created, status, error: null, incomplete_details: null,
         instructions: request.system || null, max_output_tokens: null, metadata: {}, model: request.model,
-        output, parallel_tool_calls: false, previous_response_id: body.previous_response_id || null,
+        output, parallel_tool_calls: request.parallelToolCalls === true, previous_response_id: body.previous_response_id || null,
         reasoning: { effort: cliOptions.reasoning_effort, summary: cliOptions.reasoning_summary ?? null }, store: true, temperature: null,
         text: { format: { type: 'text' }, verbosity: cliOptions.verbosity ?? null }, tool_choice: body.tool_choice || 'auto', tools: body.tools || [], top_p: null,
         truncation: 'auto', usage
@@ -293,7 +294,7 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 600000, 
       const outputIndex = liveMessageIndex ?? (request.stream ? nextOutputIndex : reasoningItem ? 1 : 0);
       const output=[];
       if (reasoningItem) output[request.stream ? reasoningIndex : 0]=reasoningItem;
-      output[outputIndex]=outputItem;
+      for (const [offset, item] of outputItems.entries()) output[outputIndex + offset]=item;
       const finalResponse = responseObject('completed', output, responsesUsage(collected.usage));
       if (request.stream) {
         const sendEvent=sendResponseEvent;
@@ -305,14 +306,16 @@ export function createBridge({ key, provider = runProvider, timeoutMs = 600000, 
           // Every summary part was already emitted in receive order.
           sendEvent('response.output_item.done', { output_index: reasoningIndex, item: reasoningItem });
         }
-        if (decision.type === 'tool_call') {
+        if (decision.type === 'tool_call') for (const [offset, outputItem] of outputItems.entries()) {
+          const index = outputIndex + offset;
           const pending = { ...outputItem, status: 'in_progress', arguments: '' };
-          sendEvent('response.output_item.added', { output_index: outputIndex, item: pending });
+          sendEvent('response.output_item.added', { output_index: index, item: pending });
           const args = outputItem.arguments;
-          sendEvent('response.function_call_arguments.delta', { item_id: outputItem.id, output_index: outputIndex, delta: args });
-          sendEvent('response.function_call_arguments.done', { item_id: outputItem.id, output_index: outputIndex, arguments: args });
-          sendEvent('response.output_item.done', { output_index: outputIndex, item: outputItem });
+          sendEvent('response.function_call_arguments.delta', { item_id: outputItem.id, output_index: index, delta: args });
+          sendEvent('response.function_call_arguments.done', { item_id: outputItem.id, output_index: index, arguments: args });
+          sendEvent('response.output_item.done', { output_index: index, item: outputItem });
         } else {
+          const [outputItem] = outputItems;
           if (liveMessageIndex === undefined) {
             sendEvent('response.output_item.added', { output_index: outputIndex, item: { ...outputItem, status: 'in_progress', content: [] } });
             sendEvent('response.content_part.added', { item_id: outputItem.id, output_index: outputIndex, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } });

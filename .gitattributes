@@ -1,6 +1,5 @@
 
-# Bitbucket shell runner executes these files on Linux.
 ci/*.sh text eol=lf
 ci/*.py text eol=lf
-bitbucket-pipelines.yml text eol=lf
+.github/workflows/*.yml text eol=lf
 Dockerfile text eol=lf

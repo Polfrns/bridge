@@ -40,7 +40,7 @@ export function classifyOperation(value) {
     return Object.hasOwn(OPERATION_LABELS,type) ? type : null;
   }
   if (value.provider === 'claude') {
-    const mapped = {Read:'workspace.read',Write:'workspace.write',Edit:'workspace.edit',MultiEdit:'workspace.edit',
+    const mapped = {Read:'workspace.read',Write:'workspace.write',Edit:'workspace.edit',MultiEdit:'workspace.edit',NotebookEdit:'workspace.edit',
       Glob:'workspace.list',Grep:'workspace.search',WebSearch:'web.search',WebFetch:'web.fetch'}[type];
     if (mapped) return mapped;
     if (['Bash','mcp__workspace__execute'].includes(type)) return commandOperation(item.command);

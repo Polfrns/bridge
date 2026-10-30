@@ -2,7 +2,7 @@
 
 ## Suite reproducible
 
-La referencia completa Linux es la etapa ci del Dockerfile:
+La referencia completa Linux es la etapa ci del Dockerfile, que ejecuta el workflow [bridge-ci-deploy.yml](.github/workflows/bridge-ci-deploy.yml):
 
 ```bash
 docker build --target ci --tag bridge-ci-check:local .
@@ -49,13 +49,13 @@ Los tests de privacidad de exportación no deben confundirse con la política de
 
 ## Último resultado registrado
 
-Sobre el código previo a esta revisión documental se ejecutó:
+Sobre el código actual (herramientas ampliadas y relay con varias llamadas) se ejecutó:
 
 ```bash
-docker build --target ci --tag bridge-langfuse-check:local .
+docker build --target ci --tag bridge-tools-ci .
 ```
 
-Resultado: **210 pruebas Node y 9 pruebas Python aprobadas, sin omisiones**. También pasaron 23 pruebas dirigidas de ciclo de vida, observabilidad, privacidad y exportación real a un colector local. Estos resultados sustituyen los recuentos históricos de entregas anteriores; no son una ejecución nueva por editar documentación.
+Resultado: **215 pruebas Node y 11 pruebas Python aprobadas, sin omisiones**, incluido el recálculo de fórmulas con LibreOffice real. En la misma imagen, con las opciones de seguridad de compose, `check:workspace` verificó aislamiento, edición DOCX, gráfico pandas/matplotlib y disponibilidad de pandoc y dot en el sandbox; una prueba manual generó PDF con WeasyPrint y reportlab y los leyó con pdfplumber dentro del sandbox. La ejecución anterior (210 Node y 9 Python) incluía además 23 pruebas dirigidas de observabilidad que no se han repetido.
 
 ## Comprobaciones del host
 
@@ -73,7 +73,7 @@ En las comprobaciones Windows anteriores, check:sandbox pasó con unelevated y u
 
 ## Pendiente de validación integral
 
-Los adaptadores de inferencia de las pruebas usan SDK simulados; el SDK real de Langfuse se prueba con colectores locales. No se han validado aquí sesiones reales Claude/Codex, granularidad real de texto, selección backend confirmada por el proveedor, navegador Roko, MCP externo, Langfuse desplegado ni Bitbucket/VM de producción.
+Los adaptadores de inferencia de las pruebas usan SDK simulados; el SDK real de Langfuse se prueba con colectores locales. No se han validado aquí sesiones reales Claude/Codex, granularidad real de texto, selección backend confirmada por el proveedor, navegador Roko, MCP externo, Langfuse desplegado ni el runner/VM de producción.
 
 La prueba integral debe recorrer desde Roko una respuesta textual, llamada de función con continuación, creación/edición de archivo y cancelación por proveedor. Verifica bytes descargables, parciales reales y sandbox del host. El script histórico scripts/Test-Bridge.ps1 envía solo Bearer y no firma identidad; no basta para probar el contrato de inferencia actual.
 

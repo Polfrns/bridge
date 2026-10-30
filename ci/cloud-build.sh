@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs on Atlassian Cloud. The VM is scheduled only after this step succeeds.
+# Runs in GitHub Actions. Deployment starts only after this step succeeds.
 set -Eeuo pipefail
 umask 077
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -9,18 +9,13 @@ mode=${2:-test}
 [[ "$mode" == test || "$mode" == publish ]] || exit 2
 rm -f ci-result.json ci-result.json.tmp
 if [[ "$mode" == publish ]]; then
-  [[ "${BITBUCKET_BRANCH:-}" == main ]] || { echo 'Only main may publish a deployment image.' >&2; exit 1; }
+  [[ "${GITHUB_REF_NAME:-}" == main ]] || { echo 'Only main may publish a deployment image.' >&2; exit 1; }
   repository=$(python3 "$script_dir/registry-manifest.py" repository "$app")
   registry=${repository%%/*}
-  if [[ "$registry" == crg.apkg.io && -n "${BITBUCKET_PACKAGES_USERNAME:-}" && -n "${BITBUCKET_PACKAGES_TOKEN:-}" ]]; then
-    push_user=$BITBUCKET_PACKAGES_USERNAME
-    push_token=$BITBUCKET_PACKAGES_TOKEN
-  else
-    : "${CI_REGISTRY_PUSH_USER:?Set in the image-publish deployment environment}"
-    : "${CI_REGISTRY_PUSH_TOKEN:?Set in the image-publish deployment environment}"
-    push_user=$CI_REGISTRY_PUSH_USER
-    push_token=$CI_REGISTRY_PUSH_TOKEN
-  fi
+  : "${CI_REGISTRY_PUSH_USER:?Missing registry username}"
+  : "${CI_REGISTRY_PUSH_TOKEN:?Missing registry token}"
+  push_user=$CI_REGISTRY_PUSH_USER
+  push_token=$CI_REGISTRY_PUSH_TOKEN
 fi
 bash "$script_dir/build.sh" "$app"
 if [[ "$mode" == test ]]; then
@@ -37,7 +32,7 @@ function cleanup_registry() { rm -rf "$registry_config"; }
 trap cleanup_registry EXIT
 printf '%s' "$push_token" |
   docker login "$registry" --username "$push_user" --password-stdin >/dev/null
-remote_tag="${repository}:${BITBUCKET_COMMIT}-${BITBUCKET_BUILD_NUMBER}"
+remote_tag="${repository}:${GITHUB_SHA}-${GITHUB_RUN_NUMBER}"
 docker tag "$image" "$remote_tag"
 docker push "$remote_tag"
 # Docker Hub may normalize away docker.io; the manifest helper checks this alias.

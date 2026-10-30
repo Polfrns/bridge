@@ -1,10 +1,7 @@
-# Configurar en Bitbucket; no copiar sobre el .env de la aplicación.
-# Repository variables (sustituir tu-workspace por tu slug real):
-CI_IMAGE_REPOSITORY=crg.apkg.io/tu-workspace/bridge
-# Deployment production:
+# Configurar como variables/secrets del environment production en GitHub Actions.
+# No copiar sobre el .env de la aplicación.
+CI_IMAGE_REPOSITORY=ghcr.io/polfrns/bridge
 BRIDGE_DEPLOY_DIR=/home/rokoface/services/bridge
-# Solo para registros sin autenticación nativa, en deployment image-publish:
-# CI_REGISTRY_PUSH_USER=usuario-publicador
-# CI_REGISTRY_PUSH_TOKEN=TOKEN_SEGURO_CONFIGURADO_EN_BITBUCKET
+# GitHub Actions publica en GHCR con GITHUB_TOKEN y packages:write.
 # Opcional, Roko:
 # CI_NODE_MAX_OLD_SPACE_SIZE=4096

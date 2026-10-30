@@ -1,4 +1,6 @@
 import { performance } from 'node:perf_hooks';
+import { lookup } from 'node:dns/promises';
+import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import { createAnswerStream } from './answer-stream.mjs';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -12,6 +14,44 @@ import { openAIUsage } from './protocol.mjs';
 import { workspaceInstructions } from './workspace-instructions.mjs';
 
 export const EXEC_TOOL = 'mcp__workspace__execute';
+export const WEB_TOOLS = Object.freeze(['WebSearch', 'WebFetch']);
+const FILE_TOOLS = ['Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep'];
+
+/** Search patterns resolve under their base path, so they must stay relative and never climb out. */
+const relativePattern = value => value == null || typeof value === 'string' && !value.includes('\0') && !value.includes('..')
+  && !/^([\\/~]|[A-Za-z]:)/.test(value);
+
+/** Every built-in file tool is confined to the request workspace; search defaults to it. */
+export async function workspaceToolAllowed(cwd, name, input) {
+  if (name === 'NotebookEdit') return workspaceFileAllowed(cwd, input?.notebook_path);
+  if (name === 'Glob' || name === 'Grep') {
+    return relativePattern(name === 'Glob' ? input?.pattern : input?.glob)
+      && (input?.path == null || await workspaceFileAllowed(cwd, input.path));
+  }
+  return workspaceFileAllowed(cwd, input?.file_path);
+}
+
+const NON_PUBLIC = new BlockList();
+for (const [network, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]]) NON_PUBLIC.addSubnet(network, prefix, 'ipv4');
+// BlockList applies the IPv4 rules to IPv4-mapped IPv6; NAT64 is blocked whole because it is not mapped.
+for (const [network, prefix] of [['::', 127], ['64:ff9b::', 96], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]]) NON_PUBLIC.addSubnet(network, prefix, 'ipv6');
+
+/** WebFetch runs inside the bridge container, which reaches Roko's networks and the LAN.
+ * DNS is checked here; a host that re-resolves to a private address after this check is not covered. */
+export async function publicWebUrl(value, resolveHost = host => lookup(host, { all: true, verbatim: true })) {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!isIP(host) && (!host.includes('.') || /\.(localhost|local|internal|lan|home\.arpa)\.?$/.test(host))) return false;
+  try {
+    const addresses = isIP(host) ? [{ address: host }] : await resolveHost(host);
+    return addresses.length > 0 && addresses.every(({ address }) => !NON_PUBLIC.check(address, isIP(address) === 6 ? 'ipv6' : 'ipv4'));
+  } catch { return false; }
+}
+
+const denyTool = reason => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
 
 function workspaceResultMetadata(type, block) {
   if(type !== EXEC_TOOL) return {};
@@ -55,6 +95,11 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
   const abort = () => abortController.abort(signal.reason);
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
+  const webTools = request.webSearch === true ? WEB_TOOLS : [];
+  const toolAllowed = async (name, input) => name === EXEC_TOOL
+    || FILE_TOOLS.includes(name) && await workspaceToolAllowed(cwd, name, input)
+    || name === 'WebSearch' && webTools.includes(name)
+    || name === 'WebFetch' && webTools.includes(name) && await publicWebUrl(input?.url);
   try {
     for (const path of ['outputs', 'work']) await mkdir(resolve(cwd, path), { recursive: true });
     const diagnostics = [];
@@ -76,18 +121,18 @@ export async function* runClaude(request, signal, cwd, before, env, dependencies
       };
       const options = {
         cwd, env: claudeIsolatedEnv(env), abortController,
-        tools: ['Read', 'Write', 'Edit'], allowedTools: ['Read', 'Write', 'Edit', EXEC_TOOL],
+        tools: [...FILE_TOOLS, ...webTools], allowedTools: [...FILE_TOOLS, ...webTools, EXEC_TOOL],
         mcpServers: { workspace: claudeWorkspaceServer(sdk, executor, abortController.signal, diagnostics) }, strictMcpConfig: true,
         settingSources: [], includePartialMessages: request.stream === true, maxTurns: 40,
         // PreToolUse also guards tools pre-approved by allowedTools or SDK defaults.
-        hooks: { PostToolUse:[{hooks:[recordDuration]}], PostToolUseFailure:[{hooks:[recordDuration]}], PreToolUse: [{ matcher: '^(Read|Write|Edit)$', hooks: [async input => {
-          if (await workspaceFileAllowed(cwd, input.tool_input?.file_path)) return {};
-          return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'File access is restricted to this request workspace; outside paths and symlinks are denied.' } };
-        }] }] },
-        systemPrompt: workspaceInstructions(request, cwd) + '\n\nUse mcp__workspace__execute for shell/code execution. Bash and PowerShell built-in tools are intentionally absent; this workspace tool supplies the native shell through the bridge OS sandbox.',
-        canUseTool: async (name, input) => name === EXEC_TOOL || (['Read', 'Write', 'Edit'].includes(name) && await workspaceFileAllowed(cwd, input?.file_path))
+        hooks: { PostToolUse:[{hooks:[recordDuration]}], PostToolUseFailure:[{hooks:[recordDuration]}], PreToolUse: [{ matcher: `^(${FILE_TOOLS.join('|')})$`, hooks: [async input => {
+          if (await workspaceToolAllowed(cwd, input.tool_name, input.tool_input)) return {};
+          return denyTool('File access is restricted to this request workspace; outside paths and symlinks are denied.');
+        }] }, { matcher: '^WebFetch$', hooks: [async input => await publicWebUrl(input.tool_input?.url) ? {} : denyTool('WebFetch only reaches public http(s) sites; private, local and internal addresses are denied.')] }] },
+        systemPrompt: workspaceInstructions(request, cwd) + '\n\nUse Glob and Grep to locate files and text in the workspace. Use mcp__workspace__execute for shell/code execution. Bash and PowerShell built-in tools are intentionally absent; this workspace tool supplies the native shell through the bridge OS sandbox.',
+        canUseTool: async (name, input) => await toolAllowed(name, input)
           ? { behavior: 'allow', updatedInput: input }
-          : { behavior: 'deny', message: 'Use the isolated workspace file tools or mcp__workspace__execute. Outside paths and symlinks are denied.' },
+          : { behavior: 'deny', message: 'Use the isolated workspace file tools or mcp__workspace__execute. Outside paths and symlinks are denied; web tools need web search enabled and a public URL.' },
         outputFormat: { type: 'json_schema', schema: artifactOutputSchema(request) },
         ...claudeModelOptions(request.cliOptions),
         // Only this request's HOME; removed in runProvider's finally, never a shared history.

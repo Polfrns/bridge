@@ -2,7 +2,7 @@
 
 Esta guía instala el bridge en Linux o Windows con Docker Compose. En Windows, Docker Desktop debe usar contenedores Linux. La imagen contiene el runtime Node, los SDK de Claude y Codex y las herramientas de archivos incluidas en el Dockerfile; no hace falta instalar Node o Python en el host.
 
-Describe una instalación Compose local. Si producción usa Bitbucket y una imagen aprobada por digest, sigue [DEPLOY.md](DEPLOY.md) para actualizar o recrear conservando esa imagen. La versión declarada es 0.7.3; consulta [CHANGELOG.md](CHANGELOG.md) para los cambios posteriores del repositorio.
+Describe una instalación Compose local. Para producción con GitHub Actions y una imagen aprobada por digest, sigue [DEPLOY.md](DEPLOY.md) para actualizar o recrear conservando esa imagen. La versión declarada es 0.7.3; consulta [CHANGELOG.md](CHANGELOG.md) para los cambios posteriores del repositorio.
 
 ## Requisitos
 

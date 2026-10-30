@@ -20,7 +20,11 @@ try {
   }
   run(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', resolve(root, 'scripts/file-requirements.txt')]);
   if (process.argv.includes('--media')) run(python, ['-m', 'pip', 'install', '-r', resolve(root, 'scripts/file-requirements-media.txt')]);
-  run(python, ['-c', 'import PIL, pymupdf, docx, openpyxl, pptx, pillow_heif, py7zr; print("Image, PDF and Office editing runtime ready.")']);
+  run(python, ['-c', 'import PIL, pymupdf, docx, openpyxl, pptx, pillow_heif, py7zr, numpy, pandas, matplotlib, pdfplumber, reportlab; print("Image, PDF, Office, data and chart runtime ready.")']);
+  // WeasyPrint also needs the host's Pango libraries, which a Windows host often lacks.
+  if (spawnSync(python, ['-c', 'import weasyprint'], { stdio: 'ignore', shell: false }).status !== 0) {
+    console.warn('WeasyPrint is installed but cannot load Pango: HTML-to-PDF is unavailable. Install libpango-1.0-0, libpangoft2-1.0-0 and libharfbuzz-subset0 (Ubuntu) and rerun.');
+  }
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

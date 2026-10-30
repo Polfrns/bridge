@@ -2,6 +2,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import sys
@@ -211,6 +212,56 @@ class FileToolsTests(unittest.TestCase):
             tool.convert_office(source, target, self.root)
             self.assertIn('Legacy slide', tool.prepare_file(target, self.root).text)
             tool.validate_file(target, self.root)
+
+    def test_structured_text_deliverables_are_parsed_without_execution(self):
+        valid = {'ok.json': '{"a": 1}', 'ok.jsonl': '{"a": 1}\n\n{"b": 2}\n', 'ok.csv': 'a,"b, c"\n1,2\n',
+                 'ok.tsv': 'a\tb\n', 'ok.py': "import os\nos.remove('DO_NOT_EXECUTE')\n", 'ok.toml': 'a = 1\n',
+                 'free.md': '# any text', 'free.html': '<p>unclosed'}
+        for name, text in valid.items():
+            with self.subTest(name=name):
+                (self.root / name).write_text(text, encoding='utf-8')
+                tool.validate_file(self.root / name, self.root)
+        (self.root / 'legacy.csv').write_bytes('Año;Señal\n'.encode('cp1252'))
+        tool.validate_file(self.root / 'legacy.csv', self.root)
+        invalid = {'bad.json': '{"a":', 'bad.jsonl': '{"a": 1}\nnot json\n', 'bad.csv': 'a,"unterminated\n',
+                   'bad.py': 'def broken(:\n', 'bad.toml': 'a = = 1\n'}
+        for name, text in invalid.items():
+            with self.subTest(name=name), self.assertRaises((tool.FileToolError, ValueError)):
+                (self.root / name).write_text(text, encoding='utf-8')
+                tool.validate_file(self.root / name, self.root)
+        (self.root / 'bad-utf8.py').write_bytes(b'print("\xff")\n')
+        with self.assertRaises(tool.FileToolError):
+            tool.validate_file(self.root / 'bad-utf8.py', self.root)
+        self.assertFalse((self.root / 'DO_NOT_EXECUTE').exists())
+
+    @unittest.skipUnless(shutil.which('soffice'), 'LibreOffice required')
+    def test_recalc_refreshes_stale_values_and_reports_formula_errors(self):
+        from openpyxl import Workbook
+        book = Workbook()
+        sheet = book.active
+        sheet['A1'] = 21
+        sheet['B1'] = '=A1*2'
+        sheet['C1'] = '=1/0'
+        source = self.root / 'formulas.xlsx'
+        book.save(source)
+        # Plant a stale cached result: only a real recalculation replaces it.
+        stale = self.root / 'stale.xlsx'
+        with zipfile.ZipFile(source) as original, zipfile.ZipFile(stale, 'w', zipfile.ZIP_DEFLATED) as copy:
+            for item in original.infolist():
+                data = original.read(item)
+                if item.filename == 'xl/worksheets/sheet1.xml':
+                    data = re.sub(rb'(<f>A1\*2</f>)(<v\s*/>|<v></v>)?', rb'\1<v>999</v>', data)
+                    self.assertIn(b'<v>999</v>', data)
+                copy.writestr(item, data)
+        result = tool.recalculate_workbook(stale, self.root / 'work' / 'checked.xlsx', self.root)
+        self.assertEqual(result['error_count'], 1)
+        self.assertEqual(result['errors'][0]['cell'], 'C1')
+        self.assertEqual(result['errors'][0]['value'], '#DIV/0!')
+        from openpyxl import load_workbook
+        checked = load_workbook(result['path'], data_only=True)
+        self.assertEqual(checked.active['B1'].value, 42)
+        with self.assertRaises(tool.FileToolError):
+            tool.recalculate_workbook(stale, self.root / 'work' / 'checked.ods', self.root)
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
     def test_media_metadata_and_video_frames(self):

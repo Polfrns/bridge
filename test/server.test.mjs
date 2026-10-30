@@ -310,7 +310,7 @@ test('discovery advertises replay support and provider-specific CLI capabilities
   assert.equal(codex.capabilities.defaults.reasoning_effort, 'medium');
   assert.equal(deep.capabilities.defaults.reasoning_effort, 'high');
   assert.deepEqual(claude.capabilities.verbosity, []);
-  assert.equal(claude.capabilities.web_search, false);
+  assert.equal(claude.capabilities.web_search, true);
 });
 
 test('non-object JSON is a client error before resolving signed identity', async t => {
@@ -322,4 +322,35 @@ test('non-object JSON is a client error before resolving signed identity', async
     });
     assert.equal(response.status, 400, JSON.stringify(value));
   }
+});
+
+test('independent function calls are relayed together in Chat and Responses', async t => {
+  const decision = { action: 'tool_call', text: '', name: 'read_file', arguments_json: '{"path":"a.txt"}', additional_calls: [{ name: 'read_file', arguments_json: '{"path":"b.txt"}' }] };
+  const url = await serve(t, async function* (request) {
+    assert.equal(request.parallelToolCalls, true);
+    assert.ok(request.outputSchema.properties.additional_calls);
+    yield { text: JSON.stringify(decision) };
+  });
+  const tool = { type: 'function', name: 'read_file', parameters: { type: 'object', properties: {} } };
+  const chat = await (await post(url, { ...body, tools: [{ type: 'function', function: tool }] })).json();
+  assert.deepEqual(chat.choices[0].message.tool_calls.map(call => JSON.parse(call.function.arguments).path), ['a.txt', 'b.txt']);
+  const streamed = await (await post(url, { ...body, stream: true, tools: [{ type: 'function', function: tool }] })).text();
+  assert.match(streamed, /"index":1,"id":"call_/);
+  const response = await (await post(url, { model: 'gpt-codex', input: 'Read both', tools: [tool] }, headers, '/v1/responses')).json();
+  const calls = response.output.filter(item => item.type === 'function_call');
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[0].call_id, calls[1].call_id);
+  assert.equal(response.parallel_tool_calls, true);
+  const events = await (await post(url, { model: 'gpt-codex', input: 'Read both', stream: true, tools: [tool] }, headers, '/v1/responses')).text();
+  assert.equal(events.match(/event: response\.function_call_arguments\.done/g).length, 2);
+});
+
+test('parallel_tool_calls=false keeps the single-call schema and rejects extra calls', async t => {
+  const url = await serve(t, async function* (request) {
+    assert.equal(request.parallelToolCalls, false);
+    assert.equal(request.outputSchema.properties.additional_calls, undefined);
+    yield { text: JSON.stringify({ action: 'tool_call', text: '', name: 'read_file', arguments_json: '{}', additional_calls: [{ name: 'read_file', arguments_json: '{}' }] }) };
+  });
+  const res = await post(url, { ...body, parallel_tool_calls: false, tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object', properties: {} } } }] });
+  assert.equal(res.status, 502);
 });

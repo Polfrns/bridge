@@ -57,7 +57,6 @@ export function resolveCliOptions(model, body, contextOptions = {}, env = proces
   if (result.reasoning_summary != null && !['auto', 'concise', 'detailed', 'none'].includes(result.reasoning_summary)) throw new BridgeError(400, 'Unsupported reasoning_summary.', 'invalid_cli_option');
   if (result.provider === 'claude' && (result.verbosity != null || result.reasoning_summary != null)) throw new BridgeError(400, 'Claude Code does not expose verbosity/reasoning_summary controls. Use reasoning_effort.', 'invalid_cli_option');
   if (result.web_search != null && typeof result.web_search !== 'boolean') throw new BridgeError(400, 'web_search must be boolean.', 'invalid_cli_option');
-  if (result.provider === 'claude' && result.web_search === true) throw new BridgeError(422, 'Native web search is only enabled on Codex. Use a LibreChat web-search function with Claude.', 'native_tool_runtime_required');
   // Permit inert legacy SDK defaults, but never pretend a non-default control works.
   const inert = { temperature: 1, top_p: 1, frequency_penalty: 0, presence_penalty: 0, n: 1 };
   for (const name of ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'stop', 'seed', 'logit_bias', 'logprobs', 'top_logprobs', 'n']) {
@@ -82,7 +81,9 @@ export function codexThreadOptions(request, cwd) {
   return {
     workingDirectory: cwd, skipGitRepoCheck: true,
     sandboxMode: 'workspace-write', approvalPolicy: 'never',
-    networkAccessEnabled: request.webSearch, webSearchMode: request.webSearch ? 'live' : 'disabled',
+    // Live search is hosted by the provider. The shell sandbox stays offline:
+    // the bridge container reaches Roko's networks and the LAN.
+    networkAccessEnabled: false, webSearchMode: request.webSearch ? 'live' : 'disabled',
     ...(options.model ? { model: options.model } : {}),
     modelReasoningEffort: options.reasoning_effort,
   };
@@ -121,7 +122,7 @@ export function cliCapabilities(model) {
     reasoning_effort: codex ? CODEX_EFFORTS : CLAUDE_EFFORTS,
     verbosity: codex ? ['low', 'medium', 'high'] : [],
     reasoning_summary: codex ? ['auto', 'concise', 'detailed', 'none'] : [],
-    web_search: codex,
+    web_search: true,
     defaults: { reasoning_effort: preset.reasoning_effort },
   };
 }

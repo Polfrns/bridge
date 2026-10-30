@@ -164,7 +164,7 @@ def run_tool(args: list[str], timeout: int = 40) -> str:
     return stdout.decode(errors='replace')
 
 
-def convert_office(source: Path, output: Path, workspace: Path) -> Path:
+def convert_office(source: Path, output: Path, workspace: Path, recalculate: bool = False) -> Path:
     if output.suffix.lower() not in OFFICE_EXTENSIONS | {'.pdf', '.txt', '.csv', '.html'}:
         raise FileToolError('Unsupported Office conversion target.', 'unsupported_conversion')
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +173,10 @@ def convert_office(source: Path, output: Path, workspace: Path) -> Path:
         profile = temp / 'profile' / 'user'
         profile.mkdir(parents=True)
         # Fresh profiles have no trusted sources; disable automatic document macros.
-        (profile / 'registrymodifications.xcu').write_text('<oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item></oor:items>', encoding='utf-8')
+        # Calc normally keeps cached results on load; mode 0 recalculates every formula.
+        recalc = ''.join(f'<item oor:path="/org.openoffice.Office.Calc/Formula/Load"><prop oor:name="{name}" oor:op="fuse"><value>0</value></prop></item>'
+                         for name in ('OOXMLRecalcMode', 'ODFRecalcMode')) if recalculate else ''
+        (profile / 'registrymodifications.xcu').write_text('<oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>' + recalc + '</oor:items>', encoding='utf-8')
         run_tool([executable('soffice'), '-env:UserInstallation=' + (temp / 'profile').as_uri(), '--headless', '--convert-to', output.suffix[1:], '--outdir', str(temp), str(source)])
         converted = temp / (source.stem + output.suffix)
         if not converted.is_file() or converted.stat().st_size == 0:
@@ -445,6 +448,86 @@ def transcribe(source: Path) -> str:
     return bounded_text(text)
 
 
+FORMULA_ERRORS = {'#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#N/A', '#NUM!', '#NULL!', '#SPILL!', '#CALC!'}
+MAX_FORMULA_CELLS = 2_000_000
+
+
+def recalculate_workbook(source: Path, output: Path, workspace: Path) -> dict:
+    """LibreOffice recalculates a copy; the result lists cells whose fresh value is an error."""
+    if source.suffix.lower() not in {'.xlsx', '.xlsm', '.xls', '.xlsb', '.ods', '.csv'} or output.suffix.lower() != '.xlsx':
+        raise FileToolError('Recalculation reads a spreadsheet and writes an .xlsx copy.', 'unsupported_conversion')
+    convert_office(source, output, workspace, recalculate=True)
+    import openpyxl
+    errors: list[dict] = []
+    count = cells = 0
+    book = openpyxl.load_workbook(output, read_only=True, data_only=True)
+    try:
+        for sheet in book:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    cells += 1
+                    if cells > MAX_FORMULA_CELLS:
+                        raise FileToolError('Workbook exceeds the recalculation cell limit.', 'archive_limit')
+                    if isinstance(cell.value, str) and cell.value in FORMULA_ERRORS:
+                        count += 1
+                        if len(errors) < 50:
+                            errors.append({'sheet': sheet.title, 'cell': cell.coordinate, 'value': cell.value})
+    finally:
+        book.close()
+    return {'path': str(output), 'error_count': count, 'errors': errors}
+
+
+STRUCTURED_TEXT = {'.json', '.ipynb', '.jsonl', '.csv', '.tsv', '.py', '.toml'}
+
+
+def read_text(path: Path, legacy: bool = False) -> str:
+    data = path.read_bytes()
+    encoding = 'utf-16' if data[:2] in {b'\xff\xfe', b'\xfe\xff'} else 'utf-8-sig'
+    try:
+        return data.decode(encoding)
+    except UnicodeDecodeError as error:
+        # Spreadsheet exports are often Windows-1252; preserving that encoding is valid.
+        if legacy:
+            return data.decode('latin-1')
+        raise FileToolError(f'Text deliverable is not valid {encoding.upper()}: {error}.') from None
+
+
+def validate_text(path: Path, suffix: str) -> None:
+    text = read_text(path, legacy=suffix in {'.csv', '.tsv'})
+    if suffix in {'.json', '.ipynb'}:
+        json.loads(text)
+    elif suffix == '.jsonl':
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.strip():
+                try:
+                    json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise FileToolError(f'Invalid JSON on line {number}: {error.msg}.') from None
+    elif suffix in {'.csv', '.tsv'}:
+        import csv
+        try:
+            for _ in csv.reader(io.StringIO(text, newline=''), delimiter='\t' if suffix == '.tsv' else ',', strict=True):
+                pass
+        except csv.Error as error:
+            raise FileToolError(f'Malformed {suffix[1:].upper()}: {error}.') from None
+    elif suffix == '.py':
+        import ast
+        # Parsing only: the deliverable is never compiled to bytecode or executed.
+        try:
+            ast.parse(text, filename=path.name)
+        except SyntaxError as error:
+            raise FileToolError(f'Python syntax error on line {error.lineno}: {error.msg}.') from None
+    elif suffix == '.toml':
+        try:
+            import tomllib
+        except ImportError:  # Python 3.10 has no TOML reader.
+            return
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as error:
+            raise FileToolError(f'Invalid TOML: {error}.') from None
+
+
 def validate_file(path: Path, workspace: Path) -> None:
     if not path.is_file() or not 0 < path.stat().st_size <= MAX_FILE_BYTES:
         raise FileToolError('Missing, empty or oversized deliverable.')
@@ -479,10 +562,10 @@ def validate_file(path: Path, workspace: Path) -> None:
         info = json.loads(run_tool([executable('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-show_streams', '-of', 'json', str(path)]))
         if not info.get('streams'):
             raise FileToolError('Media output has no readable streams.')
-    elif suffix in {'.json', '.ipynb'}:
-        json.loads(path.read_text(encoding='utf-8-sig'))
     elif suffix in {'.xml', '.svg'}:
         xml_root(path.read_bytes())
+    elif suffix in STRUCTURED_TEXT:
+        validate_text(path, suffix)
 
 
 def main() -> None:
@@ -490,7 +573,7 @@ def main() -> None:
         raise SystemExit(1)
     signal.signal(signal.SIGTERM, cancel_reader)
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['prepare', 'validate', 'convert', 'transcribe'])
+    parser.add_argument('operation', choices=['prepare', 'validate', 'convert', 'recalc', 'transcribe'])
     parser.add_argument('--workspace', required=True)
     parser.add_argument('--path', required=True)
     parser.add_argument('--output')
@@ -510,6 +593,10 @@ def main() -> None:
             convert_office(source, target, workspace)
             validate_file(target, workspace)
             result = {'path': str(target)}
+        elif args.operation == 'recalc':
+            if not args.output:
+                raise FileToolError('Recalculation requires --output.')
+            result = recalculate_workbook(source, workspace_file(workspace, args.output), workspace)
         else:
             result = {'text': transcribe(source)}
         print(json.dumps(result, ensure_ascii=False))
